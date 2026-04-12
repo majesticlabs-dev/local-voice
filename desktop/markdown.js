@@ -1,0 +1,41 @@
+const FRONTMATTER_YAML = /^---\s*\n.*?\n(?:---|\.\.\.)\s*\n/s;
+const FRONTMATTER_TOML = /^\+\+\+\s*\n.*?\n\+\+\+\s*\n/s;
+const FENCED_CODE = /```[^\n]*\n([\s\S]*?)```/g;
+const INLINE_CODE = /`([^`]+)`/g;
+const IMAGE_LINK = /!\[([^\]]*)\]\([^)]+\)/g;
+const MARKDOWN_LINK = /\[([^\]]+)\]\([^)]+\)/g;
+const REFERENCE_LINK = /^\[[^\]]+\]:\s+\S+.*$/gm;
+const ATX_HEADING = /^\s{0,3}#{1,6}\s*/gm;
+const SETEXT_HEADING = /^[=-]{2,}\s*$/gm;
+const BLOCKQUOTE = /^\s{0,3}>\s?/gm;
+const TASK_ITEM = /^\s*[-*+]\s+\[[ xX]\]\s+/gm;
+const LIST_ITEM = /^\s*(?:[-*+]|\d+\.)\s+/gm;
+const TABLE_DIVIDER = /^\s*\|?(?:\s*:?-+:?\s*\|)+\s*$/gm;
+const HTML_TAG = /<\/?[^>]+>/g;
+const HORIZONTAL_RULE = /^\s*([-*_]\s*){3,}$/gm;
+const EMPHASIS = /(\*\*|__|\*|_|~~)/g;
+
+export function stripMarkdown(markdown) {
+  let text = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\uFEFF/, '');
+  text = text.replace(FRONTMATTER_YAML, '');
+  text = text.replace(FRONTMATTER_TOML, '');
+  text = text.replace(FENCED_CODE, (_, code) => `\n${code.trim()}\n`);
+  text = text.replace(IMAGE_LINK, (_, alt) => alt.trim());
+  text = text.replace(MARKDOWN_LINK, (_, label) => label.trim());
+  text = text.replace(REFERENCE_LINK, '');
+  text = text.replace(INLINE_CODE, (_, code) => code);
+  text = text.replace(ATX_HEADING, '');
+  text = text.replace(SETEXT_HEADING, '');
+  text = text.replace(BLOCKQUOTE, '');
+  text = text.replace(TASK_ITEM, '');
+  text = text.replace(LIST_ITEM, '');
+  text = text.replace(TABLE_DIVIDER, '');
+  text = text.replace(HORIZONTAL_RULE, '');
+  text = text.replace(HTML_TAG, '');
+  text = text.replace(/\|/g, ' ');
+  text = text.replace(EMPHASIS, '');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  text = text.replace(/[ \t]+/g, ' ');
+  text = text.replace(/ *\n */g, '\n');
+  return text.trim();
+}

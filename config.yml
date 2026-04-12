@@ -1,0 +1,13 @@
+service:
+  host: 127.0.0.1
+  port: 5517
+  engine: kokoro
+  default_voice: af_bella
+  default_rate: 1.0
+  default_format: mp3
+  max_input_length: 50000
+
+desktop:
+  api_host: 127.0.0.1
+  server_mode_host: 0.0.0.0
+  chunk_threshold: 800

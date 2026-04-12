@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="20" fill="#2563eb"/>
+  <g transform="translate(64,64)">
+    <!-- Speaker cone -->
+    <polygon points="-20,-24 -8,-24 8,-36 8,36 -8,24 -20,24" fill="#fff"/>
+    <!-- Sound waves -->
+    <path d="M16,-16 Q32,0 16,16" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M24,-28 Q48,0 24,28" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M32,-40 Q64,0 32,40" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" opacity="0.7"/>
+  </g>
+</svg>
