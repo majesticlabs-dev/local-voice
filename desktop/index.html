@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Local Voice Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar panel">
+        <div class="brand">
+          <p class="eyebrow">Majestic Labs <span class="version" id="app-version"></span></p>
+          <h1>Local Voice Desktop</h1>
+          <p class="subhead">
+            Drop a text file or paste content, hear it locally, and keep the API available when you need it.
+          </p>
+        </div>
+
+        <div class="status-cluster">
+          <div class="health-pill" id="health-pill">
+            <span class="health-dot" id="health-dot"></span>
+            <span id="health-text">Starting service…</span>
+          </div>
+
+          <label class="server-toggle" for="server-mode">
+            <span>Server mode</span>
+            <input type="checkbox" id="server-mode" />
+          </label>
+
+          <p class="lan-note" id="lan-note">
+            Loopback only on the configured local API address.
+          </p>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel input-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Input</p>
+              <h2>Text to speak</h2>
+            </div>
+            <div class="header-actions">
+              <button class="secondary" id="reset-text" type="button" hidden>Reset text</button>
+              <button class="secondary" id="upload-trigger" type="button">Browse files</button>
+            </div>
+          </div>
+
+          <input
+            id="file-input"
+            type="file"
+            accept=".md,.markdown,.mdx,.txt,.html,.htm,.rtf,text/markdown,text/plain,text/html,text/rtf"
+            hidden
+          />
+
+          <p class="file-badge" id="file-name" hidden></p>
+
+          <div class="startup-error-card" id="startup-error-card" hidden>
+            <p class="startup-error-title">Service startup failed</p>
+            <p class="startup-error-copy" id="startup-error-copy"></p>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Text ready for speech</span>
+            <textarea
+              id="text-input"
+              spellcheck="false"
+              placeholder="Paste or drop a text file here."
+            ></textarea>
+          </label>
+        </section>
+
+        <aside class="panel control-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Controls</p>
+              <h2>Playback and export</h2>
+            </div>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Voice</span>
+            <select id="voice-select"></select>
+          </label>
+
+          <label class="field">
+            <span class="field-label">
+              Speed
+              <span class="inline-value" id="rate-value">1.00x</span>
+            </span>
+            <input id="rate-input" type="range" min="0.7" max="1.6" step="0.05" value="1" />
+          </label>
+
+          <div class="actions">
+            <button class="primary" id="speak-button" type="button">Speak</button>
+            <button class="secondary" id="pause-button" type="button" disabled>Pause</button>
+            <button class="secondary" id="stop-button" type="button" disabled>Stop</button>
+            <button class="secondary" id="download-button" type="button" disabled>Download MP3</button>
+          </div>
+
+          <div class="playback-card">
+            <div class="playback-row">
+              <span>Status</span>
+              <span id="status-text">Idle</span>
+            </div>
+            <div class="playback-row">
+              <span>Chunk</span>
+              <span id="chunk-progress">0/0</span>
+            </div>
+            <div class="playback-row">
+              <span>Time</span>
+              <span id="time-text">0:00 / 0:00</span>
+            </div>
+            <div class="seek-actions">
+              <button class="secondary seek-button" id="restart-button" type="button" disabled>Restart</button>
+              <button class="secondary seek-button" id="backward-button" type="button" disabled>-15s</button>
+              <button class="secondary seek-button" id="forward-button" type="button" disabled>+15s</button>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="loading-row" id="loading-row" hidden>
+              <span class="spinner"></span>
+              <span id="loading-text">Preparing audio…</span>
+            </div>
+          </div>
+
+          <div class="warning-card" id="warning-card">
+            <p class="warning-title">LAN exposure warning</p>
+            <p class="warning-copy">
+              Server mode exposes an unauthenticated HTTP API to your local network. Use it only on a network you trust.
+            </p>
+          </div>
+        </aside>
+      </main>
+
+      <audio id="audio-player" preload="auto"></audio>
+    </div>
+
+    <footer class="app-footer">
+      <a href="https://majesticlabs.dev" target="_blank" class="footer-brand">
+        <img src="./majestic-logo.svg" alt="Majestic Labs" class="footer-logo" />
+        <span>Majestic Labs LLC</span>
+      </a>
+      <span>Austin, TX</span>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

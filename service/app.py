@@ -1,0 +1,69 @@
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .core.config import config
+from .providers.base import TTSProvider
+from .providers.kokoro import KokoroProvider
+from .api import export, health, preprocess, stop, stream, synthesize, voices
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("local_voice")
+
+app = FastAPI(title="Local Voice TTS", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+# Provider registry
+_provider: TTSProvider | None = None
+
+
+def get_provider() -> TTSProvider:
+    global _provider
+    if _provider is None:
+        if config.engine == "kokoro":
+            _provider = KokoroProvider()
+        else:
+            raise RuntimeError(f"Unknown engine: {config.engine}")
+        logger.info("Loaded provider: %s", _provider.name)
+    return _provider
+
+
+# Routes
+app.include_router(health.router)
+app.include_router(voices.router)
+app.include_router(synthesize.router)
+app.include_router(stream.router)
+app.include_router(stop.router)
+app.include_router(preprocess.router)
+app.include_router(export.router)
+
+
+@app.on_event("startup")
+async def startup():
+    config.cache_dir.mkdir(parents=True, exist_ok=True)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Local Voice TTS starting on %s:%d (engine=%s)", config.host, config.port, config.engine)
+    # Warm up provider
+    try:
+        provider = get_provider()
+        if provider.is_ready():
+            logger.info("Provider %s ready", provider.name)
+        else:
+            logger.warning("Provider %s not ready — will retry on first request", provider.name)
+    except Exception as e:
+        logger.warning("Provider init deferred: %s", e)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=config.host, port=config.port)
