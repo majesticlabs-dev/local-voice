@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Local Voice Desktop",
+  "version": "1.0.0",
+  "identifier": "dev.majesticlabs.localvoice",
+  "build": {
+    "frontendDist": "../desktop"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Local Voice Desktop · Majestic Labs",
+        "width": 1120,
+        "height": 920,
+        "minWidth": 1120,
+        "minHeight": 920,
+        "maxWidth": 1120,
+        "maxHeight": 920,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "copyright": "© 2026 Majestic Labs LLC",
+    "category": "Utility",
+    "shortDescription": "Local text-to-speech powered by Kokoro. Private, fast, offline.",
+    "longDescription": "Local Voice Desktop reads text aloud using a high-quality local TTS engine. Your text never leaves your machine. Built in Austin, TX by Majestic Labs LLC. https://majesticlabs.dev",
+    "macOS": {
+      "bundleVersion": "1"
+    },
+    "resources": [
+      "../.bundle-venv",
+      "../service",
+      "../config.yml",
+      "../pyproject.toml",
+      "../uv.lock"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

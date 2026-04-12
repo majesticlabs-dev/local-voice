@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.bundle-venv/*
+!.bundle-venv/.gitkeep
+venv/
+*.egg
+
+# Service artifacts
+service/artifacts/cache/
+service/artifacts/output/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Kokoro model cache
+*.onnx
+*.bin
+
+# uv
+.python-version
+
+.omx
