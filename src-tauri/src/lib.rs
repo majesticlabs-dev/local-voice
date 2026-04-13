@@ -23,6 +23,7 @@ struct ServiceRuntime {
 
 struct ServiceManager(Mutex<ServiceRuntime>);
 struct AppConfigState(AppConfig);
+struct AppSettingsState(Mutex<DesktopSettings>);
 
 struct ServiceLaunch {
     command: Command,
@@ -51,6 +52,12 @@ const SIGKILL: i32 = 9;
 struct AppConfig {
     service: ServiceConfig,
     desktop: DesktopConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+struct DesktopSettings {
+    ffmpeg_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -133,10 +140,20 @@ fn get_service_state(
 }
 
 #[tauri::command]
+fn get_desktop_settings(settings: State<'_, AppSettingsState>) -> Result<DesktopSettings, String> {
+    settings
+        .0
+        .lock()
+        .map(|settings| settings.clone())
+        .map_err(|_| "Desktop settings lock poisoned".to_string())
+}
+
+#[tauri::command]
 fn toggle_server_mode(
     app: AppHandle,
     state: State<'_, ServiceManager>,
     config: State<'_, AppConfigState>,
+    settings: State<'_, AppSettingsState>,
     enable: bool,
 ) -> Result<ServiceInfo, String> {
     let mut runtime = state
@@ -149,14 +166,49 @@ fn toggle_server_mode(
 
     let previous_mode = runtime.server_mode;
     runtime.server_mode = enable;
-    match restart_service(&app, &config.0, &mut runtime) {
+    let desktop_settings = settings
+        .0
+        .lock()
+        .map(|settings| settings.clone())
+        .map_err(|_| "Desktop settings lock poisoned".to_string())?;
+    match restart_service(&app, &config.0, &desktop_settings, &mut runtime) {
         Ok(info) => Ok(info),
         Err(err) => {
             runtime.server_mode = previous_mode;
-            let _ = restart_service(&app, &config.0, &mut runtime);
+            let _ = restart_service(&app, &config.0, &desktop_settings, &mut runtime);
             Err(err)
         }
     }
+}
+
+#[tauri::command]
+fn set_ffmpeg_path(
+    app: AppHandle,
+    state: State<'_, ServiceManager>,
+    config: State<'_, AppConfigState>,
+    settings: State<'_, AppSettingsState>,
+    path: Option<String>,
+) -> Result<ServiceInfo, String> {
+    let normalized = resolve_desktop_ffmpeg_path(path);
+    let desktop_settings = {
+        let mut settings = settings
+            .0
+            .lock()
+            .map_err(|_| "Desktop settings lock poisoned".to_string())?;
+        if settings.ffmpeg_path == normalized {
+            settings.clone()
+        } else {
+            settings.ffmpeg_path = normalized;
+            save_desktop_settings(&app, &settings)?;
+            settings.clone()
+        }
+    };
+
+    let mut runtime = state
+        .0
+        .lock()
+        .map_err(|_| "Service state lock poisoned".to_string())?;
+    restart_service(&app, &config.0, &desktop_settings, &mut runtime)
 }
 
 #[tauri::command]
@@ -239,16 +291,35 @@ fn load_app_config(project_root: &PathBuf) -> Result<AppConfig, String> {
         .map_err(|err| format!("Failed to parse {}: {err}", config_path.display()))
 }
 
-fn resolve_uv_binary() -> Option<PathBuf> {
+fn normalize_optional_path(path: Option<String>) -> Option<String> {
+    path.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn resolve_binary(name: &str, candidates: &[Option<PathBuf>]) -> Option<PathBuf> {
     if let Some(path) = env::var_os("PATH") {
         for entry in env::split_paths(&path) {
-            let candidate = entry.join("uv");
+            let candidate = entry.join(name);
             if candidate.is_file() {
                 return Some(candidate);
             }
         }
     }
 
+    candidates
+        .iter()
+        .flatten()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+}
+
+fn resolve_uv_binary() -> Option<PathBuf> {
     let home = env::var_os("HOME").map(PathBuf::from);
     let candidates = [
         Some(PathBuf::from("/opt/homebrew/bin/uv")),
@@ -257,10 +328,26 @@ fn resolve_uv_binary() -> Option<PathBuf> {
         home.as_ref().map(|path| path.join(".cargo/bin/uv")),
     ];
 
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|candidate| candidate.is_file())
+    resolve_binary("uv", &candidates)
+}
+
+fn resolve_ffmpeg_binary() -> Option<PathBuf> {
+    let home = env::var_os("HOME").map(PathBuf::from);
+    let candidates = [
+        Some(PathBuf::from("/opt/homebrew/bin/ffmpeg")),
+        Some(PathBuf::from("/usr/local/bin/ffmpeg")),
+        Some(PathBuf::from("/usr/bin/ffmpeg")),
+        Some(PathBuf::from("/bin/ffmpeg")),
+        home.as_ref().map(|path| path.join(".local/bin/ffmpeg")),
+        home.as_ref().map(|path| path.join(".cargo/bin/ffmpeg")),
+    ];
+
+    resolve_binary("ffmpeg", &candidates)
+}
+
+fn resolve_desktop_ffmpeg_path(path: Option<String>) -> Option<String> {
+    normalize_optional_path(path)
+        .or_else(|| resolve_ffmpeg_binary().map(|path| path.display().to_string()))
 }
 
 fn bundled_runtime_root(project_root: &Path, is_debug: bool) -> PathBuf {
@@ -415,6 +502,50 @@ fn desktop_service_output_dir(app: &AppHandle) -> PathBuf {
         .join("service-output")
 }
 
+fn desktop_settings_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| runtime_base_dir().join("app-data"))
+        .join("desktop-settings.json")
+}
+
+fn load_desktop_settings(app: &AppHandle) -> Result<DesktopSettings, String> {
+    let settings_path = desktop_settings_path(app);
+    if !settings_path.exists() {
+        return Ok(DesktopSettings::default());
+    }
+
+    let contents = fs::read_to_string(&settings_path)
+        .map_err(|err| format!("Failed to read {}: {err}", settings_path.display()))?;
+    serde_json::from_str::<DesktopSettings>(&contents)
+        .map_err(|err| format!("Failed to parse {}: {err}", settings_path.display()))
+}
+
+fn save_desktop_settings(app: &AppHandle, settings: &DesktopSettings) -> Result<(), String> {
+    let settings_path = desktop_settings_path(app);
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to prepare settings directory: {err}"))?;
+    }
+
+    let contents = serde_json::to_string_pretty(settings)
+        .map_err(|err| format!("Failed to serialize desktop settings: {err}"))?;
+    fs::write(&settings_path, contents)
+        .map_err(|err| format!("Failed to write {}: {err}", settings_path.display()))
+}
+
+fn hydrate_desktop_settings(app: &AppHandle, settings: DesktopSettings) -> Result<DesktopSettings, String> {
+    let hydrated = DesktopSettings {
+        ffmpeg_path: resolve_desktop_ffmpeg_path(settings.ffmpeg_path.clone()),
+    };
+
+    if hydrated.ffmpeg_path != settings.ffmpeg_path {
+        save_desktop_settings(app, &hydrated)?;
+    }
+
+    Ok(hydrated)
+}
+
 fn configure_release_stdio(command: &mut Command, log_path: &Path) -> Result<(), String> {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)
@@ -507,6 +638,7 @@ fn refresh_service_runtime(runtime: &mut ServiceRuntime) -> Result<(), String> {
 fn build_service_command(
     app: &AppHandle,
     config: &AppConfig,
+    settings: &DesktopSettings,
     server_mode: bool,
 ) -> Result<ServiceLaunch, String> {
     let project_root = resolve_project_root(app);
@@ -572,6 +704,10 @@ fn build_service_command(
         .arg("--port")
         .arg(config.service.port.to_string());
 
+    if let Some(ffmpeg_path) = settings.ffmpeg_path.as_deref() {
+        command.env("LV_FFMPEG_PATH", ffmpeg_path);
+    }
+
     if cfg!(debug_assertions) {
         command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     } else {
@@ -607,6 +743,7 @@ fn stop_service(runtime: &mut ServiceRuntime) -> Result<(), String> {
 fn restart_service(
     app: &AppHandle,
     config: &AppConfig,
+    settings: &DesktopSettings,
     runtime: &mut ServiceRuntime,
 ) -> Result<ServiceInfo, String> {
     stop_service(runtime)?;
@@ -614,7 +751,7 @@ fn restart_service(
     let ServiceLaunch {
         mut command,
         log_path,
-    } = build_service_command(app, config, runtime.server_mode)?;
+    } = build_service_command(app, config, settings, runtime.server_mode)?;
     match command.spawn() {
         Ok(child) => {
             runtime.child = Some(child);
@@ -699,6 +836,16 @@ mod tests {
         assert_eq!(resolve_venv_python(&venv_root), Some(python_path));
 
         fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn normalize_optional_path_trims_and_drops_empty_values() {
+        assert_eq!(normalize_optional_path(None), None);
+        assert_eq!(normalize_optional_path(Some("   ".to_string())), None);
+        assert_eq!(
+            normalize_optional_path(Some(" /opt/homebrew/bin/ffmpeg  ".to_string())),
+            Some("/opt/homebrew/bin/ffmpeg".to_string())
+        );
     }
 
     #[test]
@@ -851,6 +998,10 @@ pub fn run() {
         .setup(|app| {
             let project_root = resolve_project_root(&app.handle().clone());
             let app_config = load_app_config(&project_root)?;
+            let desktop_settings = hydrate_desktop_settings(
+                &app.handle().clone(),
+                load_desktop_settings(&app.handle().clone())?,
+            )?;
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -861,13 +1012,25 @@ pub fn run() {
             }
 
             app.manage(AppConfigState(app_config));
+            app.manage(AppSettingsState(Mutex::new(desktop_settings)));
             app.manage(ServiceManager(Mutex::new(ServiceRuntime::default())));
 
             {
                 let config = app.state::<AppConfigState>();
+                let settings = app.state::<AppSettingsState>();
                 let state = app.state::<ServiceManager>();
+                let desktop_settings = settings
+                    .0
+                    .lock()
+                    .map(|settings| settings.clone())
+                    .map_err(|_| "Desktop settings lock poisoned".to_string())?;
                 let mut runtime = state.0.lock().map_err(|_| "Service state lock poisoned")?;
-                if let Err(err) = restart_service(&app.handle().clone(), &config.0, &mut runtime) {
+                if let Err(err) = restart_service(
+                    &app.handle().clone(),
+                    &config.0,
+                    &desktop_settings,
+                    &mut runtime,
+                ) {
                     runtime.last_error = Some(err);
                 }
             }
@@ -876,6 +1039,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_service_state,
+            get_desktop_settings,
+            set_ffmpeg_path,
             toggle_server_mode,
             write_audio_file
         ])

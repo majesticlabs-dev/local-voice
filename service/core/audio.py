@@ -1,9 +1,10 @@
 import io
 import struct
 import subprocess
-import shutil
 import tempfile
 from pathlib import Path
+
+from .dependencies import resolve_executable
 
 
 def wav_from_pcm(pcm_data: bytes, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2) -> bytes:
@@ -27,11 +28,11 @@ def wav_from_pcm(pcm_data: bytes, sample_rate: int = 24000, channels: int = 1, s
 
 
 def convert_to_mp3(wav_data: bytes) -> bytes:
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = resolve_executable("ffmpeg", env_var="LV_FFMPEG_PATH")
     if not ffmpeg:
-        raise RuntimeError("ffmpeg not found — install it for mp3 output")
+        raise RuntimeError("ffmpeg not found — install it for mp3 output or set a custom ffmpeg path")
     proc = subprocess.run(
-        [ffmpeg, "-i", "pipe:0", "-f", "mp3", "-ab", "128k", "-y", "pipe:1"],
+        [str(ffmpeg), "-i", "pipe:0", "-f", "mp3", "-ab", "128k", "-y", "pipe:1"],
         input=wav_data,
         capture_output=True,
     )
@@ -51,9 +52,9 @@ def concat_audio_files(audio_files: list[Path], output_format: str = "mp3") -> b
         if source.suffix.lstrip(".") == "wav" and output_format == "mp3":
             return convert_to_mp3(source.read_bytes())
 
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = resolve_executable("ffmpeg", env_var="LV_FFMPEG_PATH")
     if not ffmpeg:
-        raise RuntimeError("ffmpeg not found — install it for mp3 output")
+        raise RuntimeError("ffmpeg not found — install it for mp3 output or set a custom ffmpeg path")
 
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as manifest:
         for audio_file in audio_files:
@@ -65,7 +66,7 @@ def concat_audio_files(audio_files: list[Path], output_format: str = "mp3") -> b
     try:
         proc = subprocess.run(
             [
-                ffmpeg,
+                str(ffmpeg),
                 "-f",
                 "concat",
                 "-safe",

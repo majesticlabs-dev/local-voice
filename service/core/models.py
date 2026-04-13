@@ -30,12 +30,21 @@ class StopRequest(BaseModel):
     job_id: str
 
 
+class DependencyStatus(BaseModel):
+    name: str
+    available: bool = True
+    required: bool = True
+    detail: str = ""
+    location: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     engine: str = ""
     model: str = ""
     ready: bool = True
     platform: str = ""
+    dependencies: list[DependencyStatus] = Field(default_factory=list)
 
 
 class VoiceInfo(BaseModel):

@@ -14,6 +14,10 @@ let currentJob = {
   errorMessage: '',
 };
 
+function blockingDependencies(dependencies = []) {
+  return dependencies.filter((dependency) => dependency?.required && !dependency?.available);
+}
+
 function syncTransportButtons() {
   const btnSpeak = $('#btn-speak');
   const btnPause = $('#btn-pause');
@@ -58,13 +62,22 @@ async function checkHealth() {
   try {
     const data = await api.health();
     const engineLabel = data.engine || 'Local Voice';
-    serviceReady = Boolean(data.ready);
-    dot.className = serviceReady ? 'health-dot ok' : 'health-dot unknown';
-    label.textContent = serviceReady ? engineLabel : `${engineLabel} warming`;
+    const blocking = blockingDependencies(data.dependencies);
+    serviceReady = Boolean(data.ready) && blocking.length === 0;
+    if (blocking.length) {
+      dot.className = 'health-dot error';
+      label.textContent = blocking[0].name === 'ffmpeg' ? 'ffmpeg missing' : 'Service issue';
+      label.title = blocking[0].detail || '';
+    } else {
+      dot.className = serviceReady ? 'health-dot ok' : 'health-dot unknown';
+      label.textContent = serviceReady ? engineLabel : `${engineLabel} warming`;
+      label.title = '';
+    }
   } catch (_) {
     serviceReady = false;
     dot.className = 'health-dot error';
     label.textContent = 'Open app';
+    label.title = '';
   }
   syncTransportButtons();
   return serviceReady;

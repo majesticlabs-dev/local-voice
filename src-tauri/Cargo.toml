@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "Desktop wrapper for the Local Voice TTS service."
 authors = ["Majestic Labs LLC"]
 license = "MIT"

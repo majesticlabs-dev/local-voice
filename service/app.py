@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import config
+from .core.dependencies import runtime_dependencies
 from .providers.base import TTSProvider
 from .providers.kokoro import KokoroProvider
 from .api import export, health, preprocess, stop, stream, synthesize, voices
@@ -14,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_voice")
 
-app = FastAPI(title="Local Voice TTS", version="1.0.0")
+app = FastAPI(title="Local Voice TTS", version="1.0.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,15 +54,32 @@ async def startup():
     config.cache_dir.mkdir(parents=True, exist_ok=True)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Local Voice TTS starting on %s:%d (engine=%s)", config.host, config.port, config.engine)
-    # Warm up provider
+    provider_name = config.engine
+    model_name = ""
+    provider_ready = False
+    provider_error = None
+
     try:
         provider = get_provider()
-        if provider.is_ready():
+        provider_name = provider.name
+        model_name = provider.model_name
+        provider_ready = provider.is_ready()
+        if provider_ready:
             logger.info("Provider %s ready", provider.name)
         else:
             logger.warning("Provider %s not ready — will retry on first request", provider.name)
-    except Exception as e:
-        logger.warning("Provider init deferred: %s", e)
+    except Exception as exc:
+        provider_error = exc
+        logger.warning("Provider init deferred: %s", exc)
+
+    for dependency in runtime_dependencies(
+        provider_name=provider_name,
+        model_name=model_name,
+        provider_ready=provider_ready,
+        provider_error=provider_error,
+    ):
+        log = logger.info if dependency["available"] else logger.warning
+        log("Dependency check [%s]: %s", dependency["name"], dependency["detail"])
 
 
 if __name__ == "__main__":
