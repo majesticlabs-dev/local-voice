@@ -22,10 +22,14 @@ const saveDialog = tauriApi.dialog?.save
 const state = {
   loading: false,
   loadingText: 'Preparing audio…',
+  ffmpegPath: '',
   healthPhase: 'starting',
   healthReady: false,
   healthText: 'Starting service…',
+  settingsOpen: false,
   startupError: '',
+  startupErrorTitle: 'Startup issue',
+  startupIssueNotice: '',
   serviceInfo: null,
   activeChunk: 0,
   totalChunks: 0,
@@ -48,6 +52,7 @@ const els = {
   downloadButton: document.querySelector('#download-button'),
   fileInput: document.querySelector('#file-input'),
   fileName: document.querySelector('#file-name'),
+  ffmpegPath: document.querySelector('#ffmpeg-path'),
   healthDot: document.querySelector('#health-dot'),
   healthPill: document.querySelector('#health-pill'),
   healthText: document.querySelector('#health-text'),
@@ -60,10 +65,14 @@ const els = {
   rateValue: document.querySelector('#rate-value'),
   resetText: document.querySelector('#reset-text'),
   restartButton: document.querySelector('#restart-button'),
+  settingsButton: document.querySelector('#settings-button'),
+  settingsClose: document.querySelector('#settings-close'),
+  settingsOverlay: document.querySelector('#settings-overlay'),
   serverMode: document.querySelector('#server-mode'),
   speakButton: document.querySelector('#speak-button'),
   startupErrorCard: document.querySelector('#startup-error-card'),
   startupErrorCopy: document.querySelector('#startup-error-copy'),
+  startupErrorTitle: document.querySelector('#startup-error-title'),
   statusText: document.querySelector('#status-text'),
   stopButton: document.querySelector('#stop-button'),
   textField: document.querySelector('.input-panel .field'),
@@ -71,7 +80,6 @@ const els = {
   timeText: document.querySelector('#time-text'),
   uploadTrigger: document.querySelector('#upload-trigger'),
   voiceSelect: document.querySelector('#voice-select'),
-  warningCard: document.querySelector('#warning-card'),
   forwardButton: document.querySelector('#forward-button'),
 };
 
@@ -94,6 +102,16 @@ function saveSettings() {
   );
 }
 
+async function loadDesktopSettings() {
+  if (!invoke) {
+    return;
+  }
+
+  const desktopSettings = await invoke('get_desktop_settings');
+  state.ffmpegPath = desktopSettings.ffmpegPath ?? '';
+  els.ffmpegPath.value = state.ffmpegPath;
+}
+
 function setLoading(loading, text = state.loadingText) {
   state.loading = loading;
   state.loadingText = text;
@@ -104,9 +122,111 @@ function setStatus(text) {
   els.statusText.textContent = text;
 }
 
+function openSettings() {
+  state.settingsOpen = true;
+  render();
+}
+
+function closeSettings() {
+  state.settingsOpen = false;
+  render();
+}
+
 function showError(message) {
   setStatus('Error');
   return messageDialog(message, { title: 'Local Voice Desktop', kind: 'error' });
+}
+
+function extractErrorDetail(payload) {
+  if (!payload) {
+    return '';
+  }
+  if (typeof payload === 'string') {
+    return payload;
+  }
+  if (typeof payload.detail === 'string') {
+    return payload.detail;
+  }
+  if (Array.isArray(payload.detail)) {
+    return payload.detail.map((item) => {
+      if (typeof item === 'string') {
+        return item;
+      }
+      if (typeof item?.msg === 'string') {
+        return item.msg;
+      }
+      return JSON.stringify(item);
+    }).join('; ');
+  }
+  return '';
+}
+
+async function responseErrorMessage(response) {
+  const text = await response.text();
+  if (!text) {
+    return `Request failed (${response.status})`;
+  }
+
+  try {
+    const detail = extractErrorDetail(JSON.parse(text));
+    if (detail) {
+      return detail;
+    }
+  } catch (_) {}
+
+  return text;
+}
+
+function blockingDependencies(dependencies = []) {
+  return dependencies.filter((dependency) => dependency?.required && !dependency?.available);
+}
+
+function dependencyErrorMessage(dependencies = []) {
+  return blockingDependencies(dependencies)
+    .map((dependency) => dependency.detail)
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function applyHealthState(health) {
+  const dependencies = Array.isArray(health?.dependencies) ? health.dependencies : [];
+  const blocking = blockingDependencies(dependencies);
+
+  state.healthReady = Boolean(health?.ready) && blocking.length === 0;
+
+  if (blocking.length) {
+    const missingBinary = blocking.some((dependency) => dependency.name === 'ffmpeg');
+    state.healthPhase = 'error';
+    state.healthText = missingBinary ? 'Missing dependency' : 'Startup issue';
+    state.startupErrorTitle = missingBinary ? 'Missing dependency' : 'Startup issue';
+    state.startupError = dependencyErrorMessage(blocking);
+    return;
+  }
+
+  state.startupErrorTitle = 'Startup issue';
+  state.startupError = '';
+  state.healthPhase = health?.ready ? 'ready' : 'starting';
+  state.healthText = health?.ready
+    ? `Service ready (${health.engine})`
+    : `Service warming up (${health.engine})`;
+}
+
+async function maybeNotifyStartupIssue() {
+  if (!state.startupError) {
+    state.startupIssueNotice = '';
+    return;
+  }
+
+  const noticeKey = `${state.startupErrorTitle}\n${state.startupError}`;
+  if (state.startupIssueNotice === noticeKey) {
+    return;
+  }
+
+  state.startupIssueNotice = noticeKey;
+  await messageDialog(state.startupError, {
+    title: `${state.startupErrorTitle} · Local Voice Desktop`,
+    kind: 'error',
+  });
 }
 
 function cleanupCurrentAudioUrl() {
@@ -185,9 +305,11 @@ function render() {
   }
 
   els.startupErrorCard.hidden = !state.startupError;
+  els.startupErrorTitle.textContent = state.startupErrorTitle;
   els.startupErrorCopy.textContent = state.startupError;
+  els.settingsButton.setAttribute('aria-expanded', String(state.settingsOpen));
+  els.settingsOverlay.hidden = !state.settingsOpen;
   els.textField.hidden = Boolean(state.startupError);
-  els.warningCard.hidden = !state.serviceInfo?.serverMode;
 }
 
 async function ensureTrackBlob(index) {
@@ -263,7 +385,7 @@ function sleep(ms) {
 async function fetchJson(path, options = {}) {
   const response = await fetch(`${apiBase()}${path}`, options);
   if (!response.ok) {
-    throw new Error(await response.text() || `${response.status}`);
+    throw new Error(await responseErrorMessage(response));
   }
   return response.json();
 }
@@ -271,7 +393,7 @@ async function fetchJson(path, options = {}) {
 async function fetchBlob(path, options = {}) {
   const response = await fetch(`${apiBase()}${path}`, options);
   if (!response.ok) {
-    throw new Error(await response.text() || `${response.status}`);
+    throw new Error(await responseErrorMessage(response));
   }
   return response.blob();
 }
@@ -286,7 +408,7 @@ async function fetchChunkBlob(path) {
       await sleep(250);
       continue;
     }
-    throw new Error(await response.text() || `${response.status}`);
+    throw new Error(await responseErrorMessage(response));
   }
 
   throw new Error('Timed out while waiting for the next audio chunk.');
@@ -295,13 +417,8 @@ async function fetchChunkBlob(path) {
 async function healthPoll() {
   try {
     const health = await fetchJson('/health');
-    state.healthReady = Boolean(health.ready);
-    state.healthPhase = health.ready ? 'ready' : 'starting';
-    state.healthText = health.ready
-      ? `Service ready (${health.engine})`
-      : `Service warming up (${health.engine})`;
-    state.startupError = '';
-    if (health.ready && !state.voicesLoaded) {
+    applyHealthState(health);
+    if (state.healthReady && !state.voicesLoaded) {
       await loadVoices();
     }
   } catch (_) {
@@ -314,18 +431,22 @@ async function healthPoll() {
     if (state.serviceInfo?.lastError) {
       state.healthPhase = 'error';
       state.healthText = 'Service failed';
+      state.startupErrorTitle = 'Service startup failed';
       state.startupError = state.serviceInfo.lastError;
     } else if (state.serviceInfo?.serviceRunning) {
       state.healthPhase = 'starting';
       state.healthText = 'Starting service…';
+      state.startupErrorTitle = 'Startup issue';
       state.startupError = '';
     } else {
       state.healthPhase = 'error';
       state.healthText = 'Service unavailable';
+      state.startupErrorTitle = 'Startup issue';
       state.startupError = '';
     }
   } finally {
     render();
+    await maybeNotifyStartupIssue();
   }
 }
 
@@ -338,13 +459,16 @@ async function loadServiceState() {
     state.healthPhase = 'error';
     state.healthReady = false;
     state.healthText = 'Service failed';
+    state.startupErrorTitle = 'Service startup failed';
     state.startupError = state.serviceInfo.lastError;
   } else if (state.serviceInfo?.serviceRunning) {
     state.healthPhase = 'starting';
     state.healthReady = false;
     state.healthText = 'Starting service…';
+    state.startupErrorTitle = 'Startup issue';
     state.startupError = '';
   } else {
+    state.startupErrorTitle = 'Startup issue';
     state.startupError = '';
   }
   render();
@@ -746,6 +870,33 @@ async function handleFile(file) {
   render();
 }
 
+async function handleFfmpegPathChange() {
+  if (!invoke) {
+    return;
+  }
+
+  const nextValue = els.ffmpegPath.value.trim();
+  const previousValue = state.ffmpegPath.trim();
+  if (nextValue === previousValue) {
+    return;
+  }
+
+  setLoading(true, 'Updating ffmpeg path…');
+  setStatus('Updating settings');
+
+  try {
+    state.serviceInfo = await invoke('set_ffmpeg_path', { path: nextValue || null });
+    await loadDesktopSettings();
+    await healthPoll();
+  } catch (error) {
+    els.ffmpegPath.value = state.ffmpegPath;
+    await showError(error.message);
+  } finally {
+    setLoading(false);
+    render();
+  }
+}
+
 async function handleServerToggle() {
   const enable = els.serverMode.checked;
   if (enable) {
@@ -818,7 +969,17 @@ async function init() {
     syncRateLabel();
     saveSettings();
   });
+  els.settingsButton.addEventListener('click', openSettings);
+  els.settingsClose.addEventListener('click', closeSettings);
+  els.settingsOverlay.addEventListener('click', (event) => {
+    if (event.target === els.settingsOverlay) {
+      closeSettings();
+    }
+  });
   els.voiceSelect.addEventListener('change', saveSettings);
+  els.ffmpegPath.addEventListener('change', () => {
+    handleFfmpegPathChange().catch((error) => showError(error.message));
+  });
   els.serverMode.addEventListener('change', handleServerToggle);
   els.speakButton.addEventListener('click', handleSpeak);
   els.pauseButton.addEventListener('click', handlePauseResume);
@@ -833,8 +994,14 @@ async function init() {
     render();
   });
   els.textInput.addEventListener('input', render);
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.settingsOpen) {
+      closeSettings();
+    }
+  });
 
   try {
+    await loadDesktopSettings();
     await loadServiceState();
     if (settings.serverMode && !state.serviceInfo?.serverMode) {
       state.serviceInfo = await invoke('toggle_server_mode', { enable: true });

@@ -26,10 +26,7 @@
             <span id="health-text">Starting service…</span>
           </div>
 
-          <label class="server-toggle" for="server-mode">
-            <span>Server mode</span>
-            <input type="checkbox" id="server-mode" />
-          </label>
+          <button aria-haspopup="dialog" class="settings-trigger" id="settings-button" type="button">Settings</button>
 
           <p class="lan-note" id="lan-note">
             Loopback only on the configured local API address.
@@ -60,7 +57,7 @@
           <p class="file-badge" id="file-name" hidden></p>
 
           <div class="startup-error-card" id="startup-error-card" hidden>
-            <p class="startup-error-title">Service startup failed</p>
+            <p class="startup-error-title" id="startup-error-title">Startup issue</p>
             <p class="startup-error-copy" id="startup-error-copy"></p>
           </div>
 
@@ -128,15 +125,48 @@
               <span id="loading-text">Preparing audio…</span>
             </div>
           </div>
-
-          <div class="warning-card" id="warning-card">
-            <p class="warning-title">LAN exposure warning</p>
-            <p class="warning-copy">
-              Server mode exposes an unauthenticated HTTP API to your local network. Use it only on a network you trust.
-            </p>
-          </div>
         </aside>
       </main>
+
+      <div class="settings-overlay" id="settings-overlay" hidden>
+        <section class="settings-dialog panel" aria-labelledby="settings-title" aria-modal="true" role="dialog">
+          <div class="panel-header settings-header">
+            <div>
+              <p class="eyebrow">Settings</p>
+              <h2 id="settings-title">Application settings</h2>
+            </div>
+            <button class="secondary settings-close" id="settings-close" type="button">Done</button>
+          </div>
+
+          <div class="settings-body">
+            <div class="settings-section">
+              <label class="server-toggle" for="server-mode">
+                <span>Server mode</span>
+                <input type="checkbox" id="server-mode" />
+              </label>
+              <p class="field-note">
+                Expose the unauthenticated TTS API to your local network only when you explicitly need it.
+              </p>
+            </div>
+
+            <label class="field">
+              <span class="field-label">
+                ffmpeg path
+                <span class="inline-value">Optional</span>
+              </span>
+              <input
+                id="ffmpeg-path"
+                type="text"
+                spellcheck="false"
+                placeholder="/opt/homebrew/bin/ffmpeg"
+              />
+              <span class="field-note">
+                Auto-detected from standard locations when available. Change this only if `ffmpeg` is installed elsewhere.
+              </span>
+            </label>
+          </div>
+        </section>
+      </div>
 
       <audio id="audio-player" preload="auto"></audio>
     </div>

@@ -158,6 +158,14 @@ textarea {
   accent-color: var(--accent);
 }
 
+.settings-trigger {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: inherit;
+  text-align: center;
+}
+
 .lan-note {
   margin: 0;
   padding: 0 2px;
@@ -260,9 +268,14 @@ textarea {
 
 .dropzone-copy,
 .file-badge,
-.warning-copy {
+.warning-copy,
+.field-note {
   color: var(--muted);
   line-height: 1.5;
+}
+
+.field-note {
+  font-size: 0.92rem;
 }
 
 .file-badge {
@@ -299,12 +312,14 @@ textarea {
 
 textarea,
 select,
+input[type="text"],
 input[type="range"] {
   width: 100%;
 }
 
 textarea,
-select {
+select,
+input[type="text"] {
   border: 1px solid rgba(31, 42, 47, 0.14);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.78);
@@ -327,6 +342,10 @@ textarea {
 }
 
 select {
+  padding: 14px 16px;
+}
+
+input[type="text"] {
   padding: 14px 16px;
 }
 
@@ -368,8 +387,7 @@ button:disabled {
   color: inherit;
 }
 
-.playback-card,
-.warning-card {
+.playback-card {
   padding: 16px;
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.62);
@@ -436,14 +454,45 @@ button:disabled {
   animation: spin 900ms linear infinite;
 }
 
-.warning-title {
-  margin: 0 0 8px;
-  font-weight: 700;
-  color: var(--bad);
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(31, 42, 47, 0.2);
+  backdrop-filter: blur(8px);
 }
 
-.warning-copy {
-  margin: 0;
+.settings-overlay[hidden] {
+  display: none;
+}
+
+.settings-dialog {
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(80vh, 720px);
+  padding: 20px 20px 22px;
+  overflow: auto;
+}
+
+.settings-header {
+  margin-bottom: 0;
+}
+
+.settings-close {
+  min-width: 84px;
+}
+
+.settings-body {
+  margin-top: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 8px;
 }
 
 @keyframes spin {
@@ -506,6 +555,11 @@ button:disabled {
 
   .status-cluster {
     min-width: 0;
+  }
+
+  .settings-dialog {
+    width: min(100vw - 24px, 460px);
+    max-height: calc(100vh - 32px);
   }
 
   textarea {

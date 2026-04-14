@@ -28,6 +28,8 @@ The desktop app bundles the TTS service and starts it automatically. You still n
 - [uv](https://docs.astral.sh/uv/) — `brew install uv`
 - [ffmpeg](https://formulae.brew.sh/formula/ffmpeg) — `brew install ffmpeg`
 
+On launch, the desktop app checks the local engine runtime and `ffmpeg` availability up front. Homebrew installs in `/opt/homebrew/bin` and `/usr/local/bin` are detected automatically and written into the app settings. If your `ffmpeg` binary lives somewhere unusual, you can override it in the desktop app with the optional `ffmpeg path` setting.
+
 ### Chrome Extension
 
 Install from the [Chrome Web Store](https://chromewebstore.google.com/) (search "Local Voice Reader"), or load manually:
@@ -91,6 +93,7 @@ Override service defaults in `config.yml` or with environment variables:
 | `LV_ENGINE` | `kokoro` | TTS engine |
 | `LV_VOICE` | `af_bella` | Default voice |
 | `LV_MAX_INPUT` | `50000` | Max text length per request |
+| `LV_FFMPEG_PATH` | unset | Advanced override for standalone service runs when `ffmpeg` is installed outside standard PATH / Homebrew locations |
 
 ## Architecture
 
@@ -172,7 +175,7 @@ Output: `src-tauri/target/release/bundle/macos/Local Voice Desktop.app`
 | Problem | Fix |
 |---------|-----|
 | Red dot in extension popup | TTS service isn't running — launch the desktop app or run `./run.sh` |
-| No audio output | Check that ffmpeg is installed: `which ffmpeg` |
+| No audio output | Launch the desktop app and check the startup warning. Homebrew installs under `/opt/homebrew/bin` and `/usr/local/bin` are detected automatically; for custom installs, set the optional `ffmpeg path` in app settings. |
 | "No readable text found" | Select text first, or switch to Article mode |
 | Extension not loading | Ensure you selected the `extension/` directory, not the project root |
 | Kokoro import error | Run `uv sync` to reinstall dependencies |
