@@ -478,9 +478,11 @@ function serializeNodeText(node) {
     }
   }
 
+  let childText = '';
   for (const child of element.childNodes) {
-    text += serializeNodeText(child);
+    childText += serializeNodeText(child);
   }
+  text += isListItem ? childText.replace(/^\n+/, '') : childText;
 
   if (isHeading || isBlock) text += '\n';
   return text;
