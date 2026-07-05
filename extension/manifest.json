@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Local Voice Reader",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Read any web page aloud using a high-quality local TTS engine. Private, fast, and offline — your text never leaves your Mac.",
   "homepage_url": "https://majesticlabs.dev",
   "permissions": [

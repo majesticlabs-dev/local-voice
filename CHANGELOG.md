@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.2] - 2026-07-05
+
+### Fixed
+- Keep the list marker on the same line as its content when serializing node text in the extension reader.
+
 ## [1.0.1] - 2026-04-13
 
 ### Fixed
