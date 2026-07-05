@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_voice")
 
-app = FastAPI(title="Local Voice TTS", version="1.0.1")
+app = FastAPI(title="Local Voice TTS", version="1.0.3")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,7 +68,10 @@ async def startup():
             logger.info("Provider %s ready", provider.name)
         else:
             logger.warning("Provider %s not ready — will retry on first request", provider.name)
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
+        # SystemExit (e.g. a dependency calling sys.exit during model
+        # resolution) is a BaseException, not an Exception, so it would
+        # otherwise escape this guard and abort FastAPI startup.
         provider_error = exc
         logger.warning("Provider init deferred: %s", exc)
 

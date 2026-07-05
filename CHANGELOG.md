@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3] - 2026-07-05
+
+### Fixed
+- Bundle the spaCy `en_core_web_sm` model so the desktop service no longer tries to download it at runtime. The download failed in the packaged (externally-managed) Python environment, raising `SystemExit` and crashing service startup ("service exited before it became ready, exit status 3").
+- Treat a provider that calls `sys.exit()` during load as "not ready" instead of aborting service startup, so engine issues degrade gracefully and retry on first request.
+- Surface the real Python exception in the desktop startup error instead of uvicorn's generic "Application startup failed" line.
+
 ## [1.0.2] - 2026-07-05
 
 ### Fixed

@@ -82,7 +82,10 @@ class KokoroProvider(TTSProvider):
         try:
             _load_kokoro()
             return _pipeline is not None
-        except Exception:
+        except (Exception, SystemExit):
+            # Some engine dependencies (e.g. spaCy model resolution) call
+            # sys.exit() on failure, which raises SystemExit rather than
+            # Exception. Treat that as "not ready" instead of crashing.
             return False
 
     def list_voices(self) -> list[dict]:

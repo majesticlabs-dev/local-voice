@@ -581,6 +581,12 @@ fn latest_log_line(path: &Path, max_bytes: u64) -> Option<String> {
         .find(|line| {
             !line.is_empty()
                 && *line != "<no Python frame>"
+                // uvicorn's generic startup failure and the traceback scaffolding
+                // hide the actual exception summary that sits above them.
+                && !line.contains("Application startup failed")
+                && !line.contains("Traceback (most recent call")
+                && !line.starts_with("File \"")
+                && !line.chars().all(|c| matches!(c, '~' | '^' | ' '))
                 && !line.starts_with("Current thread ")
                 && !line.starts_with("Python runtime state:")
                 && !line.starts_with("Python path configuration:")
@@ -968,6 +974,32 @@ Current thread 0x00000001f1843100 (most recent call first):\n\
 
         assert!(message.contains("No module named 'encodings'"));
         assert!(!message.contains("<no Python frame>"));
+
+        fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn service_exit_message_surfaces_exception_over_uvicorn_startup_failure() {
+        let dir = temp_test_dir("startup-failure-log");
+        fs::create_dir_all(&dir).expect("create log dir");
+        let log_path = dir.join("service.log");
+        fs::write(
+            &log_path,
+            "INFO:     Waiting for application startup.\n\
+ERROR:    Traceback (most recent call last):\n\
+  File \"/app/service/app.py\", line 66, in startup\n\
+    provider_ready = provider.is_ready()\n\
+                     ~~~~~~~~~~~~~~~~^^\n\
+SystemExit: 1\n\
+\n\
+ERROR:    Application startup failed. Exiting.\n",
+        )
+        .expect("write log");
+
+        let message = format_service_exit(failing_exit_status(), Some(&log_path));
+
+        assert!(message.contains("SystemExit: 1"));
+        assert!(!message.contains("Application startup failed"));
 
         fs::remove_dir_all(&dir).expect("cleanup");
     }
