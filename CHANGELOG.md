@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0] - 2026-08-20
+
+### Added
+- Spanish voices (Dora, Alex, Santa) via Kokoro's Spanish pipeline. The service now keeps one Kokoro pipeline per language and picks it from the voice ID prefix.
+- Russian voices (Irina, Dmitri, Ruslan) via a new Piper provider (`piper-tts`). Voice models download from HuggingFace on first use into `LV_MODELS_DIR`, which the desktop app points at its app data directory.
+- Voice-aware routing: `/synthesize` and `/stream` dispatch to the engine that owns the requested voice ID (`ru_*` to Piper, everything else to Kokoro). `/voices` lists voices from all engines, so both the desktop app and the extension pick up the new languages automatically.
+
+### Fixed
+- Work around an espeak-ng path-length limit that crashed the packaged service (`exit status 1`, "Error processing file '/Users/runner/work/piper1-gpl/...' phontab"). espeak-ng silently rejects data directories longer than ~159 characters and falls back to a nonexistent build-machine path; when the bundled `espeak-ng-data` resolves to such a path, Piper now hands espeak a short symlink instead.
+
 ## [1.0.3] - 2026-07-05
 
 ### Fixed

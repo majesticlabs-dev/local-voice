@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yml"
 DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "artifacts" / "cache"
 DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "artifacts" / "output"
+DEFAULT_MODELS_DIR = Path(__file__).parent.parent / "artifacts" / "models"
 
 
 def _load_yaml_config() -> dict:
@@ -37,6 +38,7 @@ class Config:
     desktop_chunk_threshold: int = 800
     cache_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent / "artifacts" / "cache")
     output_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent / "artifacts" / "output")
+    models_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent / "artifacts" / "models")
     cache_ttl_seconds: int = 3600
     allowed_origins: list[str] = field(default_factory=lambda: [
         "chrome-extension://*",
@@ -61,6 +63,7 @@ class Config:
             desktop_chunk_threshold=int(desktop.get("chunk_threshold", 800)),
             cache_dir=Path(os.getenv("LV_CACHE_DIR", str(DEFAULT_CACHE_DIR))).expanduser(),
             output_dir=Path(os.getenv("LV_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))).expanduser(),
+            models_dir=Path(os.getenv("LV_MODELS_DIR", str(DEFAULT_MODELS_DIR))).expanduser(),
         )
 
 

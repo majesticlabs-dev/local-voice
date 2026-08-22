@@ -10,7 +10,19 @@ logger = logging.getLogger(__name__)
 
 # Lazy import — kokoro may not be installed yet
 _kokoro = None
-_pipeline = None
+_pipelines: dict = {}
+
+DEFAULT_LANG_CODE = "a"
+
+# Kokoro voice IDs are prefixed with their language code:
+# a=en-US, b=en-GB, e=es, f=fr, h=hi, i=it, p=pt-BR.
+# ja (j) and zh (z) are excluded: they need misaki[ja]/misaki[zh].
+SUPPORTED_LANG_CODES = {"a", "b", "e", "f", "h", "i", "p"}
+
+
+def _lang_code_for_voice(voice: str) -> str:
+    code = (voice or "")[:1].lower()
+    return code if code in SUPPORTED_LANG_CODES else DEFAULT_LANG_CODE
 
 
 def _prepare_espeak_data_root(data_path: Path) -> Path:
@@ -55,23 +67,29 @@ def _configure_espeak_backend() -> None:
     EspeakWrapper.set_data_path(str(data_root))
 
 
-def _load_kokoro():
-    global _kokoro, _pipeline
-    if _kokoro is not None:
-        return
-    try:
-        import kokoro
+def _load_kokoro(lang_code: str = DEFAULT_LANG_CODE):
+    """Import kokoro once and return the pipeline for `lang_code`, creating it
+    on first use. Pipelines are cached per language."""
+    global _kokoro
+    if _kokoro is None:
+        try:
+            import kokoro
 
-        _configure_espeak_backend()
-        _kokoro = kokoro
-        _pipeline = kokoro.KPipeline(lang_code="a")
-        logger.info("Kokoro loaded successfully")
-    except ImportError:
-        logger.warning("kokoro package not installed — run: pip install kokoro")
-        raise
-    except Exception as e:
-        logger.error("Failed to initialize Kokoro: %s", e)
-        raise
+            _configure_espeak_backend()
+            _kokoro = kokoro
+        except ImportError:
+            logger.warning("kokoro package not installed — run: pip install kokoro")
+            raise
+        except Exception as e:
+            logger.error("Failed to initialize Kokoro: %s", e)
+            raise
+
+    pipeline = _pipelines.get(lang_code)
+    if pipeline is None:
+        pipeline = _kokoro.KPipeline(lang_code=lang_code)
+        _pipelines[lang_code] = pipeline
+        logger.info("Kokoro pipeline loaded (lang_code=%s)", lang_code)
+    return pipeline
 
 
 class KokoroProvider(TTSProvider):
@@ -81,7 +99,7 @@ class KokoroProvider(TTSProvider):
     def is_ready(self) -> bool:
         try:
             _load_kokoro()
-            return _pipeline is not None
+            return True
         except (Exception, SystemExit):
             # Some engine dependencies (e.g. spaCy model resolution) call
             # sys.exit() on failure, which raises SystemExit rather than
@@ -134,16 +152,37 @@ class KokoroProvider(TTSProvider):
                 "gender": "m",
                 "sample_rate": 24000,
             },
+            {
+                "id": "ef_dora",
+                "label": "Dora (Spanish)",
+                "language": "es",
+                "gender": "f",
+                "sample_rate": 24000,
+            },
+            {
+                "id": "em_alex",
+                "label": "Alex (Spanish)",
+                "language": "es",
+                "gender": "m",
+                "sample_rate": 24000,
+            },
+            {
+                "id": "em_santa",
+                "label": "Santa (Spanish)",
+                "language": "es",
+                "gender": "m",
+                "sample_rate": 24000,
+            },
         ]
 
     def synthesize(
         self, text: str, voice: str, rate: float, audio_format: str
     ) -> bytes:
-        _load_kokoro()
+        pipeline = _load_kokoro(_lang_code_for_voice(voice))
         import numpy as np
 
         # samples is a numpy array of float32 [-1, 1]
-        pcm = _collect_audio_samples(_pipeline(text, voice=voice, speed=rate))
+        pcm = _collect_audio_samples(pipeline(text, voice=voice, speed=rate))
         pcm_int16 = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
         pcm_bytes = pcm_int16.tobytes()
 

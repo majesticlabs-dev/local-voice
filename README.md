@@ -7,7 +7,7 @@
 - **Chrome Extension** — select text on any web page and hear it read aloud
 - **Desktop App** — paste text or drop a file, listen, and export MP3s
 
-Both use the same local TTS engine powered by [Kokoro](https://github.com/hexgrad/kokoro) with six natural-sounding voices.
+Both use the same local TTS engine: [Kokoro](https://github.com/hexgrad/kokoro) for English and Spanish, plus [Piper](https://github.com/rhasspy/piper) for Russian — nine voices across three languages.
 
 ## Install
 
@@ -79,6 +79,14 @@ Enable **Server mode** to expose the API to other devices on your local network 
 | Michael | English | Male |
 | Emma | English (British) | Female |
 | George | English (British) | Male |
+| Dora | Spanish | Female |
+| Alex | Spanish | Male |
+| Santa | Spanish | Male |
+| Irina | Russian | Female |
+| Dmitri | Russian | Male |
+| Ruslan | Russian | Male |
+
+Russian voices run on Piper. Model files (~60 MB per voice) download from HuggingFace automatically on first use into `LV_MODELS_DIR`; after that they work fully offline.
 
 ## Configuration
 
@@ -93,6 +101,7 @@ Override service defaults in `config.yml` or with environment variables:
 | `LV_ENGINE` | `kokoro` | TTS engine |
 | `LV_VOICE` | `af_bella` | Default voice |
 | `LV_MAX_INPUT` | `50000` | Max text length per request |
+| `LV_MODELS_DIR` | `service/artifacts/models` | Where Piper voice models are downloaded (the desktop app points this at its app data directory) |
 | `LV_FFMPEG_PATH` | unset | Advanced override for standalone service runs when `ffmpeg` is installed outside standard PATH / Homebrew locations |
 
 ## Architecture

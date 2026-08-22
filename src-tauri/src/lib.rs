@@ -502,6 +502,13 @@ fn desktop_service_output_dir(app: &AppHandle) -> PathBuf {
         .join("service-output")
 }
 
+fn desktop_service_models_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| runtime_base_dir().join("app-data"))
+        .join("service-models")
+}
+
 fn desktop_settings_path(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
@@ -703,6 +710,7 @@ fn build_service_command(
         .env("LV_MAX_INPUT", config.service.max_input_length.to_string())
         .env("LV_CACHE_DIR", desktop_service_cache_dir(app))
         .env("LV_OUTPUT_DIR", desktop_service_output_dir(app))
+        .env("LV_MODELS_DIR", desktop_service_models_dir(app))
         .env("PYTHONUNBUFFERED", "1")
         .arg("service.app:app")
         .arg("--host")

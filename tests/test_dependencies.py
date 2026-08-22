@@ -57,15 +57,38 @@ class DependencyStatusTests(unittest.TestCase):
             return_value=Path("/opt/homebrew/bin/ffmpeg"),
         ):
             checks = dependencies.runtime_dependencies(
-                provider_name="kokoro",
-                model_name="kokoro-82m",
-                provider_ready=True,
+                provider_statuses=[
+                    dependencies.ProviderStatus(name="kokoro", model_name="kokoro-82m", ready=True),
+                ],
             )
 
         self.assertEqual([check["name"] for check in checks], ["kokoro", "ffmpeg"])
         self.assertTrue(all(check["required"] for check in checks))
         self.assertTrue(checks[0]["available"])
         self.assertEqual(checks[1]["location"], "/opt/homebrew/bin/ffmpeg")
+
+    def test_runtime_dependencies_report_each_engine_separately(self):
+        with mock.patch.object(
+            dependencies,
+            "resolve_executable",
+            return_value=None,
+        ):
+            checks = dependencies.runtime_dependencies(
+                provider_statuses=[
+                    dependencies.ProviderStatus(name="kokoro", model_name="kokoro-82m", ready=True),
+                    dependencies.ProviderStatus(
+                        name="piper", model_name="piper-voices", error=RuntimeError("boom")
+                    ),
+                ],
+            )
+
+        self.assertEqual(
+            [check["name"] for check in checks],
+            ["kokoro", "piper", "ffmpeg"],
+        )
+        self.assertTrue(checks[0]["available"])
+        self.assertFalse(checks[1]["available"])
+        self.assertFalse(checks[2]["available"])
 
 
 if __name__ == "__main__":

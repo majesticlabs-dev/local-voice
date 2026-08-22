@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -40,7 +41,11 @@ async def synthesize(req: SynthesizeRequest):
         raise HTTPException(503, "TTS engine not ready")
 
     try:
-        audio_bytes = provider.synthesize(req.text, req.voice, req.rate, fmt)
+        # Synthesis is CPU-bound (and Piper may download a model on first
+        # use); keep it off the event loop so other requests stay live.
+        audio_bytes = await asyncio.to_thread(
+            provider.synthesize, req.text, req.voice, req.rate, fmt
+        )
     except Exception as e:
         raise HTTPException(500, f"Synthesis error: {e}")
 

@@ -1,6 +1,17 @@
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass
+class ProviderStatus:
+    name: str
+    model_name: str = ""
+    ready: bool = False
+    # BaseException: engine deps may raise SystemExit (e.g. spaCy model
+    # resolution); that is reported as "not ready", not a crash.
+    error: BaseException | None = None
 
 
 COMMON_EXECUTABLE_DIRS = (
@@ -67,7 +78,7 @@ def provider_dependency_status(
     provider_name: str,
     model_name: str,
     ready: bool,
-    error: Exception | None = None,
+    error: BaseException | None = None,
 ) -> dict[str, object]:
     if error is not None:
         detail = f"{provider_name} failed to initialize: {error}"
@@ -115,17 +126,16 @@ def ffmpeg_dependency_status() -> dict[str, object]:
 
 def runtime_dependencies(
     *,
-    provider_name: str,
-    model_name: str,
-    provider_ready: bool,
-    provider_error: Exception | None = None,
+    provider_statuses: list[ProviderStatus],
 ) -> list[dict[str, object]]:
-    return [
+    checks = [
         provider_dependency_status(
-            provider_name=provider_name,
-            model_name=model_name,
-            ready=provider_ready,
-            error=provider_error,
-        ),
-        ffmpeg_dependency_status(),
+            provider_name=status.name,
+            model_name=status.model_name,
+            ready=status.ready,
+            error=status.error,
+        )
+        for status in provider_statuses
     ]
+    checks.append(ffmpeg_dependency_status())
+    return checks

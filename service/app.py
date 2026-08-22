@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import config
-from .core.dependencies import runtime_dependencies
+from .core.dependencies import ProviderStatus, runtime_dependencies
 from .providers.base import TTSProvider
 from .providers.kokoro import KokoroProvider
 from .api import export, health, preprocess, stop, stream, synthesize, voices
@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_voice")
 
-app = FastAPI(title="Local Voice TTS", version="1.0.3")
+app = FastAPI(title="Local Voice TTS", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,12 +31,47 @@ _provider: TTSProvider | None = None
 def get_provider() -> TTSProvider:
     global _provider
     if _provider is None:
-        if config.engine == "kokoro":
-            _provider = KokoroProvider()
-        else:
-            raise RuntimeError(f"Unknown engine: {config.engine}")
+        _provider = _build_provider()
         logger.info("Loaded provider: %s", _provider.name)
     return _provider
+
+
+def get_provider_statuses() -> list[ProviderStatus]:
+    """Readiness of every engine backing the service. A router fans out to
+    its children so health covers all engines, not just the default one."""
+    try:
+        provider = get_provider()
+    except (Exception, SystemExit) as exc:
+        return [ProviderStatus(name=config.engine, error=exc)]
+
+    from .providers.router import RouterProvider
+
+    children = provider.providers if isinstance(provider, RouterProvider) else [provider]
+    statuses: list[ProviderStatus] = []
+    for child in children:
+        status = ProviderStatus(name=child.name, model_name=child.model_name)
+        try:
+            status.ready = child.is_ready()
+        except (Exception, SystemExit) as exc:
+            status.error = exc
+        statuses.append(status)
+    return statuses
+
+
+def _build_provider() -> TTSProvider:
+    from .providers.piper import PiperProvider
+
+    if config.engine == "piper":
+        return PiperProvider()
+    if config.engine != "kokoro":
+        raise RuntimeError(f"Unknown engine: {config.engine}")
+
+    # Default engine: Kokoro for its supported languages, Piper for Russian.
+    kokoro = KokoroProvider()
+    providers: list[TTSProvider] = [kokoro, PiperProvider()]
+
+    from .providers.router import RouterProvider
+    return RouterProvider(providers, default=kokoro)
 
 
 # Routes
@@ -54,33 +89,17 @@ async def startup():
     config.cache_dir.mkdir(parents=True, exist_ok=True)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Local Voice TTS starting on %s:%d (engine=%s)", config.host, config.port, config.engine)
-    provider_name = config.engine
-    model_name = ""
-    provider_ready = False
-    provider_error = None
 
-    try:
-        provider = get_provider()
-        provider_name = provider.name
-        model_name = provider.model_name
-        provider_ready = provider.is_ready()
-        if provider_ready:
-            logger.info("Provider %s ready", provider.name)
+    statuses = get_provider_statuses()
+    for status in statuses:
+        if status.error is not None:
+            logger.warning("Provider %s init deferred: %s", status.name, status.error)
+        elif status.ready:
+            logger.info("Provider %s ready (%s)", status.name, status.model_name)
         else:
-            logger.warning("Provider %s not ready — will retry on first request", provider.name)
-    except (Exception, SystemExit) as exc:
-        # SystemExit (e.g. a dependency calling sys.exit during model
-        # resolution) is a BaseException, not an Exception, so it would
-        # otherwise escape this guard and abort FastAPI startup.
-        provider_error = exc
-        logger.warning("Provider init deferred: %s", exc)
+            logger.warning("Provider %s not ready — will retry on first request", status.name)
 
-    for dependency in runtime_dependencies(
-        provider_name=provider_name,
-        model_name=model_name,
-        provider_ready=provider_ready,
-        provider_error=provider_error,
-    ):
+    for dependency in runtime_dependencies(provider_statuses=statuses):
         log = logger.info if dependency["available"] else logger.warning
         log("Dependency check [%s]: %s", dependency["name"], dependency["detail"])
 

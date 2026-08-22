@@ -9,36 +9,25 @@ from ..core.models import HealthResponse
 router = APIRouter()
 
 
-def _get_provider():
-    from ..app import get_provider
-    return get_provider()
+def _get_provider_statuses():
+    from ..app import get_provider_statuses
+    return get_provider_statuses()
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health():
-    provider_name = config.engine
-    model_name = ""
-    provider_ready = False
-    provider_error = None
-
-    try:
-        provider = _get_provider()
-        provider_name = provider.name
-        model_name = provider.model_name
-        provider_ready = provider.is_ready()
-    except Exception as exc:
-        provider_error = exc
+    statuses = _get_provider_statuses()
+    ready = bool(statuses) and all(status.ready for status in statuses)
+    engine_label = "+".join(status.name for status in statuses) or config.engine
+    model_label = "+".join(
+        status.model_name for status in statuses if status.model_name
+    )
 
     return HealthResponse(
-        status="ok" if provider_ready else "degraded",
-        engine=provider_name,
-        model=model_name,
-        ready=provider_ready,
+        status="ok" if ready else "degraded",
+        engine=engine_label,
+        model=model_label,
+        ready=ready,
         platform=f"{platform.system()}-{platform.machine()}",
-        dependencies=runtime_dependencies(
-            provider_name=provider_name,
-            model_name=model_name,
-            provider_ready=provider_ready,
-            provider_error=provider_error,
-        ),
+        dependencies=runtime_dependencies(provider_statuses=statuses),
     )

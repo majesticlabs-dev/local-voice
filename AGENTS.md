@@ -38,7 +38,7 @@ All intra-extension communication uses `chrome.runtime.sendMessage` with a `type
 
 ## Service Configuration
 
-Environment variables: `LV_HOST`, `LV_PORT`, `LV_ENGINE`, `LV_VOICE`, `LV_MAX_INPUT`. Defaults in `service/core/config.py`.
+Environment variables: `LV_HOST`, `LV_PORT`, `LV_ENGINE`, `LV_VOICE`, `LV_MAX_INPUT`, `LV_MODELS_DIR` (where Piper voice models are downloaded; the desktop app points it at its app data dir). Defaults in `service/core/config.py`.
 
 ## Extension Settings
 

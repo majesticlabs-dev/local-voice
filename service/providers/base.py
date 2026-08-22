@@ -13,6 +13,11 @@ class TTSProvider(ABC):
     def list_voices(self) -> list[dict]:
         ...
 
+    def owns_voice(self, voice: str) -> bool:
+        """Whether this provider handles the given voice ID. Used by
+        RouterProvider to dispatch; default providers return False."""
+        return False
+
     @abstractmethod
     def synthesize(self, text: str, voice: str, rate: float, audio_format: str) -> bytes:
         """Return audio bytes in the requested format (wav or mp3)."""
