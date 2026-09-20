@@ -10,6 +10,9 @@ def chunk_text(
     target_chars: int = 500,
     max_chars: int = 1000,
 ) -> list[str]:
+    if target_chars <= 0 or max_chars <= 0:
+        raise ValueError("Chunk sizes must be positive")
+    target_chars = min(target_chars, max_chars)
     text = text.strip()
     if not text:
         return []
@@ -52,7 +55,14 @@ def _chunk_by_sentence(text: str, target: int, maximum: int) -> list[str]:
                 else:
                     if current:
                         chunks.append(current)
-                    current = sentence[:maximum] if len(sentence) > maximum else sentence
+                    # Keep every part of sentences that exceed the chunk limit.
+                    while len(sentence) > maximum:
+                        split_at = sentence.rfind(" ", 0, maximum + 1)
+                        if split_at <= 0:
+                            split_at = maximum
+                        chunks.append(sentence[:split_at])
+                        sentence = sentence[split_at:].lstrip()
+                    current = sentence
 
     if current:
         chunks.append(current)

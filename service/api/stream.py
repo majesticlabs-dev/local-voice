@@ -69,8 +69,6 @@ def _synthesize_chunks(
 @router.post("/stream", response_model=StreamResponse)
 async def stream(req: StreamRequest):
     logger.info("Stream: %d chars, first 80: %s", len(req.text), repr(req.text[:80]))
-    if len(req.text) > config.max_input_length:
-        raise HTTPException(400, f"Text exceeds max length ({config.max_input_length})")
 
     if not req.text.strip():
         raise HTTPException(400, "Empty text")
@@ -86,7 +84,7 @@ async def stream(req: StreamRequest):
         req.text,
         strategy=req.chunking.strategy,
         target_chars=req.chunking.target_chars,
-        max_chars=req.chunking.max_chars,
+        max_chars=min(req.chunking.max_chars, config.max_input_length),
     )
 
     fmt = req.format if req.format in MIME else "mp3"

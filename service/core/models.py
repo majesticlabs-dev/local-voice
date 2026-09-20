@@ -13,8 +13,8 @@ class SynthesizeRequest(BaseModel):
 
 class StreamChunkingConfig(BaseModel):
     strategy: str = "sentence"
-    target_chars: int = 500
-    max_chars: int = 1000
+    target_chars: int = Field(default=500, gt=0)
+    max_chars: int = Field(default=1000, gt=0)
 
 
 class StreamRequest(BaseModel):

@@ -85,14 +85,12 @@ async def export_audio(req: ExportRequest):
     text = (req.text or "").strip()
     if not text:
         raise HTTPException(400, "Provide either job_id or text")
-    if len(text) > config.max_input_length:
-        raise HTTPException(400, f"Text exceeds max length ({config.max_input_length})")
 
     chunks = chunk_text(
         text,
         strategy=req.chunking.strategy,
         target_chars=req.chunking.target_chars,
-        max_chars=req.chunking.max_chars,
+        max_chars=min(req.chunking.max_chars, config.max_input_length),
     )
     try:
         with tempfile.TemporaryDirectory(prefix="local-voice-export-") as temp_dir:
