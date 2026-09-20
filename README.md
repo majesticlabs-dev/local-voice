@@ -100,7 +100,7 @@ Override service defaults in `config.yml` or with environment variables:
 | `LV_PORT` | `5517` | Port |
 | `LV_ENGINE` | `kokoro` | TTS engine |
 | `LV_VOICE` | `af_bella` | Default voice |
-| `LV_MAX_INPUT` | `50000` | Max text length per request |
+| `LV_MAX_INPUT` | `50000` | Max text length per synthesis call (applied per chunk for streaming and export) |
 | `LV_MODELS_DIR` | `service/artifacts/models` | Where Piper voice models are downloaded (the desktop app points this at its app data directory) |
 | `LV_FFMPEG_PATH` | unset | Advanced override for standalone service runs when `ffmpeg` is installed outside standard PATH / Homebrew locations |
 
@@ -125,7 +125,7 @@ Chrome Extension / Desktop App        Python Service (localhost:5517)
                                       └──────────────────────────┘
 ```
 
-Short text (under 800 chars) goes through a single `/synthesize` call. Longer text is split into sentence-safe chunks via `/stream` and played as a queue.
+Short text (under 800 chars) goes through a single `/synthesize` call. Longer text is split into chunks via `/stream` and played as a queue while later chunks are generated. The 50,000-character limit applies to each synthesis call, not to the full document sent to `/stream` or `/export`. Sentences that exceed the chunk size are split without dropping text.
 
 ## Development
 
