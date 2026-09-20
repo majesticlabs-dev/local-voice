@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1] - 2026-09-20
+
+### Fixed
+- Play and export documents above 50,000 characters by applying the synthesis limit to each chunk.
+- Preserve all text when long sentences exceed the chunk size.
+
 ## [1.1.0] - 2026-08-20
 
 ### Added

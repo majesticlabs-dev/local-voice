@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_voice")
 
-app = FastAPI(title="Local Voice TTS", version="1.1.0")
+app = FastAPI(title="Local Voice TTS", version="1.1.1")
 
 app.add_middleware(
     CORSMiddleware,
