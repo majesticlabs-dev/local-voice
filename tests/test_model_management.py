@@ -40,7 +40,7 @@ class ModelManagementTests(unittest.TestCase):
         target.parent.mkdir()
         target.write_bytes(b"x" * 2351)
         assets = {a["id"]: a for a in catalog(self.root)["assets"]}
-        self.assertEqual(assets["kokoro-config"]["state"], "present_unverified")
+        self.assertEqual(assets["kokoro-config"]["state"], "invalid")
         target.write_bytes(b"bad")
         self.assertEqual({a["id"]: a for a in catalog(self.root)["assets"]}["kokoro-config"]["state"], "invalid")
         target.unlink()
@@ -61,13 +61,15 @@ class ModelManagementTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"LV_MANAGEMENT_TOKEN": ""}):
             self.assertEqual(self.client.get("/models", headers=headers).status_code, 403)
 
-    def test_unimplemented_mutations_do_not_touch_disk(self):
+    def test_reserved_removal_and_invalid_request(self):
         headers = {"X-Local-Voice-Management": "test-secret"}
-        self.assertEqual(self.client.post("/models/downloads", json={"languages": ["en"]}, headers=headers).status_code, 501)
         self.assertEqual(self.client.post("/models/removals", json={"languages": ["ru"]}, headers=headers).status_code, 501)
         self.assertEqual(self.client.post("/models/downloads", json={"languages": ["other"]}, headers=headers).status_code, 422)
-        self.assertEqual(self.client.get("/models/downloads/job", headers=headers).status_code, 501)
-        self.assertEqual(self.client.post("/models/downloads/job/cancel", headers=headers).status_code, 501)
+        blocked = self.client.post("/models/downloads", json={"languages": ["en"]}, headers=headers)
+        self.assertEqual(blocked.status_code, 409)
+        self.assertIn("integrity metadata", blocked.json()["detail"])
+        self.assertEqual(self.client.get("/models/downloads/job", headers=headers).status_code, 404)
+        self.assertEqual(self.client.post("/models/downloads/job/cancel", headers=headers).status_code, 404)
         self.assertEqual(list(self.root.iterdir()), [])
 
 

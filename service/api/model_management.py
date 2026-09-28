@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..core.model_catalog import catalog
+from ..core import model_downloads
 
 router = APIRouter(prefix="/models", tags=["model management"])
 _NATIVE_ORIGINS = {"tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}
@@ -45,19 +46,29 @@ def list_models():
     return catalog()
 
 
-@router.post("/downloads", status_code=501, dependencies=[Depends(authorize)])
+@router.post("/downloads", status_code=202, dependencies=[Depends(authorize)])
 def start_download(request: DownloadRequest):
-    raise HTTPException(501, "Download jobs are not implemented (T03b)")
+    try:
+        job, _ = model_downloads.start(request.languages)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return job.response()
 
 
 @router.get("/downloads/{job_id}", dependencies=[Depends(authorize)])
 def download_status(job_id: str):
-    raise HTTPException(501, "Download jobs are not implemented (T03b)")
+    job = model_downloads.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown download job")
+    return job.response()
 
 
-@router.post("/downloads/{job_id}/cancel", status_code=501, dependencies=[Depends(authorize)])
+@router.post("/downloads/{job_id}/cancel", dependencies=[Depends(authorize)])
 def cancel_download(job_id: str):
-    raise HTTPException(501, "Download jobs are not implemented (T03b)")
+    job = model_downloads.cancel(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown download job")
+    return job.response()
 
 
 @router.post("/removals", status_code=501, dependencies=[Depends(authorize)])
