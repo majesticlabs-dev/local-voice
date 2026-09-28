@@ -83,7 +83,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(Fixture.received, [])
         controller.read_clipboard()
         self.wait_for(lambda: controller.status()["state"] == "playing")
-        self.assertEqual(Fixture.received[0], self.text.read_text()[:len(Fixture.received[0])])
+        self.assertIn("quoted ' $(touch injected) ; text.", Fixture.received[0])
         self.assertEqual(self.played.read_bytes(), b"fixture audio")
         controller.stop()
         self.assertEqual(controller.status()["state"], "idle")
@@ -104,6 +104,11 @@ class ControllerTests(unittest.TestCase):
         controller.read_clipboard()
         self.wait_for(lambda: controller.status()["state"] == "error")
         self.assertEqual(Fixture.received, [])
+        self.text.write_text("\x1b[31m\ue0b0 ── 😀\x1b[0m")
+        controller.read_clipboard()
+        self.wait_for(lambda: controller.status()["state"] == "error")
+        self.assertIn("no speakable text", controller.status()["error"])
+        self.assertEqual(Fixture.received, [])
         self.text.write_text("Hello")
         Fixture.response = 503
         controller.read_clipboard()
@@ -115,6 +120,18 @@ class ControllerTests(unittest.TestCase):
             controller.read_clipboard()
             self.wait_for(lambda: controller.status()["state"] == "error")
             self.assertIn("Missing command", controller.status()["error"])
+
+    def test_selection_reads_primary_and_toggle_stops(self):
+        paste = Path(self.tmp.name) / "bin/wl-paste"
+        paste.write_text('#!/bin/sh\n[ "$1" = "--primary" ] || exit 3\ncat "$LV_TEST_CLIPBOARD"\n')
+        self.text.write_text("Selected words")
+        controller = Controller()
+        controller.toggle_selection()
+        self.wait_for(lambda: controller.status()["state"] == "playing")
+        self.assertEqual(Fixture.received, ["Selected words"])
+        controller.toggle_selection()
+        self.assertEqual(controller.status()["state"], "idle")
+        self.assertEqual(len(Fixture.received), 1)
 
     def test_long_text_plays_all_chunks_sequentially(self):
         player = Path(self.tmp.name) / "bin/ffplay"

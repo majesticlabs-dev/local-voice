@@ -15,6 +15,7 @@ import time
 from urllib import error, request
 
 from .core.chunking import chunk_text
+from .core.speakable import prepare
 
 MAX_TEXT = 50000
 MAX_AUDIO = 32 * 1024 * 1024
@@ -56,14 +57,22 @@ class Controller:
             if player is not None:
                 player.terminate()
 
-    def read_clipboard(self):
+    def read_clipboard(self, selection=False):
         self.stop()
         with self.lock:
             self.cancel = threading.Event()
             generation = self.generation
             self.state = "reading"
-            thread = threading.Thread(target=self._run, args=(generation, self.cancel), daemon=True)
+            thread = threading.Thread(target=self._run, args=(generation, self.cancel, selection), daemon=True)
             thread.start()
+
+    def toggle_selection(self):
+        with self.lock:
+            active = self.state in ("reading", "synthesizing", "playing")
+        if active:
+            self.stop()
+        else:
+            self.read_clipboard(selection=True)
 
     def _set(self, generation, state, message=None):
         with self.lock:
@@ -72,18 +81,22 @@ class Controller:
             self.state, self.error = state, message
             return True
 
-    def _run(self, generation, cancelled):
+    def _run(self, generation, cancelled, selection=False):
         try:
-            # --type text/plain refuses images and other non-text clipboard offers.
-            clip = subprocess.run(["wl-paste", "--no-newline", "--type", "text/plain"],
+            # --type text/plain refuses images and other non-text offers.
+            command = ["wl-paste", "--no-newline", "--type", "text/plain"]
+            if selection:
+                command.insert(1, "--primary")
+            clip = subprocess.run(command,
                                   capture_output=True, timeout=5, check=True)
             if len(clip.stdout) > MAX_TEXT * 4:
                 raise ValueError("Clipboard text is too large")
             text = clip.stdout.decode("utf-8").strip()
-            if not text:
-                raise ValueError("Clipboard has no text")
             if len(text) > MAX_TEXT:
                 raise ValueError("Clipboard text is too large")
+            text = prepare(text)
+            if not text:
+                raise ValueError("Selection has no speakable text" if selection else "Clipboard has no speakable text")
             if not self._set(generation, "synthesizing"):
                 return
             for chunk in chunk_text(text, target_chars=500, max_chars=1000):
@@ -170,6 +183,10 @@ def serve(path):
                             command = connection.recv(128).decode().strip()
                             if command == "read-clipboard":
                                 controller.read_clipboard()
+                            elif command == "read-selection":
+                                controller.read_clipboard(selection=True)
+                            elif command == "toggle-selection":
+                                controller.toggle_selection()
                             elif command == "stop":
                                 controller.stop()
                             elif command != "status":
@@ -184,8 +201,9 @@ def serve(path):
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("read-clipboard", "stop", "status", "serve"):
-        print("Usage: controller {read-clipboard|stop|status}", file=sys.stderr)
+    reads = ("read-clipboard", "read-selection", "toggle-selection")
+    if len(sys.argv) != 2 or sys.argv[1] not in (*reads, "stop", "status", "serve"):
+        print("Usage: controller {read-clipboard|read-selection|toggle-selection|stop|status}", file=sys.stderr)
         return 2
     command = sys.argv[1]
     path = runtime_dir() / "controller.sock"
@@ -195,7 +213,7 @@ def main():
     try:
         result = send(path, command)
     except (OSError, ValueError):
-        if command != "read-clipboard":
+        if command not in reads:
             result = {"state": "offline", "error": None}
         else:
             subprocess.Popen([sys.executable, "-m", "service.clipboard_controller", "serve"],

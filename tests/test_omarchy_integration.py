@@ -65,6 +65,21 @@ class IntegrationTests(unittest.TestCase):
         self.assertFalse(self.record.exists())
         self.assertEqual(self.command("remove", "--apply").returncode, 0)
 
+    def test_optional_selection_collision_and_legacy_removal(self):
+        args = ("setup", "--read", "SUPER ALT + V", "--stop", "SUPER ALT + S",
+                "--selection", "SUPER ALT + R")
+        self.fixture.write_text(json.dumps([{"modmask": 72, "key": "r", "submap": ""}]))
+        self.assertNotEqual(self.command(*args, "--apply").returncode, 0)
+        self.assertFalse(self.record.exists())
+        self.fixture.write_text("[]")
+        self.assertEqual(self.command(*args, "--apply").returncode, 0)
+        self.assertIn("toggle-selection", self.bindings.read_text())
+        self.assertEqual(self.command("remove", "--apply").returncode, 0)
+        legacy = ("setup", "--read", "SUPER ALT + V", "--stop", "SUPER ALT + S")
+        self.assertEqual(self.command(*legacy, "--apply").returncode, 0)
+        self.assertEqual(json.loads(self.record.read_text())["version"], 1)
+        self.assertEqual(self.command("remove", "--apply").returncode, 0)
+
     def test_remove_detects_edit_after_initial_read(self):
         args = ("setup", "--read", "SUPER ALT + V", "--stop", "SUPER ALT + S", "--apply")
         self.assertEqual(self.command(*args).returncode, 0)

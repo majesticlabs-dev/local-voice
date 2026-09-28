@@ -14,6 +14,11 @@ python_bin="$(uv python find 3.12.12 --managed-python)"
 uv sync --locked --python "$python_bin" --managed-python --no-install-project --link-mode copy
 "$UV_PROJECT_ENVIRONMENT/bin/python" -m unittest discover -s tests -v
 node --test desktop/*.test.mjs extension/tests/*.test.mjs integrations/omarchy/*.test.mjs
+if command -v omarchy >/dev/null; then
+  omarchy plugin validate integrations/omarchy/local-voice.panel
+else
+  echo 'Skipping Omarchy plugin validation: omarchy not found'
+fi
 ./build.sh --prepare-runtime-only
 cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 export LOCAL_VOICE_SOURCE="$root"

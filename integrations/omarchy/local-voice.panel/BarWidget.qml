@@ -41,6 +41,12 @@ BarWidget {
   }
 
   Process {
+    id: selectionProcess
+    command: ["local-voice-controller", "toggle-selection"]
+    onExited: root.refresh()
+  }
+
+  Process {
     id: stopProcess
     command: ["local-voice-controller", "stop"]
     onExited: root.refresh()
@@ -76,6 +82,13 @@ BarWidget {
       text: "Read clipboard"
       tooltipText: "Speak clipboard text (explicit action)"
       onPressed: if (!readProcess.running) readProcess.running = true
+    }
+
+    WidgetButton {
+      bar: root.bar
+      text: "Read selection"
+      tooltipText: "Speak primary selection, or stop current playback"
+      onPressed: if (!selectionProcess.running) selectionProcess.running = true
     }
 
     WidgetButton {

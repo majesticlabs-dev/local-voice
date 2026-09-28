@@ -76,6 +76,7 @@ def run(argv=None):
     parser.add_argument("action", choices=["setup", "remove"])
     parser.add_argument("--read", help="Chosen read shortcut, e.g. 'SUPER ALT + V'")
     parser.add_argument("--stop", help="Chosen stop shortcut, e.g. 'SUPER ALT + S'")
+    parser.add_argument("--selection", help="Optional selection toggle shortcut")
     parser.add_argument("--apply", action="store_true", help="Apply the displayed changes")
     args = parser.parse_args(argv)
     home = Path.home()
@@ -122,7 +123,7 @@ def run(argv=None):
         match = owned_block(original)
         if match.group() != record.get("block"):
             raise ValueError("Owned bindings changed. No files changed.")
-        if args.read or args.stop:
+        if args.read or args.stop or args.selection:
             raise ValueError("Already installed. Remove before choosing new shortcuts.")
         print("Shortcuts already installed, no changes.")
         return
@@ -132,11 +133,13 @@ def run(argv=None):
         raise ValueError("Choose both --read and --stop. No default global shortcuts are assigned.")
     read = shortcut(args.read)
     stop = shortcut(args.stop)
-    if read[0] == stop[0] and read[1].casefold() == stop[1].casefold():
-        raise ValueError("Read and stop use the same shortcut.")
+    selection = shortcut(args.selection) if args.selection else None
+    chosen = [read, stop] + ([selection] if selection else [])
+    if len({(mask, key.casefold()) for mask, key, _ in chosen}) != len(chosen):
+        raise ValueError("Chosen actions use the same shortcut.")
     collisions = []
     binds = effective_bindings()
-    for mask, key, _ in (read, stop):
+    for mask, key, _ in chosen:
         for bind in binds:
             if bind.get("modmask") == mask and str(bind.get("key", "")).casefold() == key.casefold() and bind.get("submap", "") == "":
                 collisions.append(f"{mask}+{key}: {bind.get('description') or bind.get('dispatcher')}")
@@ -146,7 +149,8 @@ def run(argv=None):
     block = (f"{START}\n"
              f"bindd = {read[2]}, {read[1]}, Local Voice read clipboard, exec, local-voice-controller read-clipboard\n"
              f"bindd = {stop[2]}, {stop[1]}, Local Voice stop, exec, local-voice-controller stop\n"
-             f"{END}\n")
+             + (f"bindd = {selection[2]}, {selection[1]}, Local Voice toggle selection, exec, local-voice-controller toggle-selection\n" if selection else "")
+             + f"{END}\n")
     prefix = "" if not original or original.endswith("\n") else "\n"
     print(f"Append to {bindings}:\n{prefix}{block}")
     print(f"Create ownership record: {state} (exact managed block)")
