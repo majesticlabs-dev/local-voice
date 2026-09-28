@@ -1,0 +1,239 @@
+# Local Voice: Omarchy implementation plan
+
+## Purpose and authority
+
+Create a shareable, installable Omarchy integration in this repository. The user selected both the existing desktop/Chrome experience and native Omarchy panel controls with clipboard speech shortcuts. Users must choose which models they download.
+
+This document is a planning artifact, not a record of completed implementation. No implementation agents, builds, tests, installs, or model downloads were started during planning. Release publication, package-registry submission, pushes, and pull requests require separate user authorization.
+
+Herdr project: `local-voice-omarchy`.
+Repository: `/home/dpaluy/Projects/local-voice`.
+Research baseline: branch `feat/omarchy`, commit `a407f59b5d6ec9bf5aaae34a1a8a57d9e79d8763`.
+The worktree was clean before adding this plan. Future threads must inspect current state and use an explicit base containing this plan. Do not assume Herdr's default worktree base contains `feat/omarchy`.
+
+## Agreed product scope
+
+- R1: One repository for the Linux port and Omarchy integration. Do not fork or duplicate the TTS service.
+- R2: Desktop app, Chrome extension, Omarchy panel status/controls, read-clipboard shortcut, and stop shortcut.
+- R3: A shared local service that remains usable without the desktop window open. Users must not start a terminal server manually.
+- R4: Explicit model management: available models, languages/voices, size, installed status, download, cancellation/retry, and removal.
+- R5: Installation, startup, health checks, voice selection, and ordinary synthesis requests must not implicitly download models. Request confirmation for all required model assets before downloading.
+- R6: Explain shared assets. Kokoro voices use shared engine assets; Piper voices have individual model/config files. Do not imply one voice always equals one independent model file.
+- R7: Models work offline after the chosen assets are installed. Interrupted downloads must never appear installed. Block unsafe removal while assets are in use.
+- R8: Keep the API local by default. Read the clipboard only on explicit action, never monitor it continuously. Do not store clipboard text in logs or settings.
+- R9: Preserve macOS behavior except where explicit model-download control intentionally replaces automatic downloads. Keep the macOS build path functional.
+
+## Proposed defaults, not separately confirmed requirements
+
+- D1: Initial release targets Omarchy x86_64, not general Linux or ARM.
+- D2: Native Arch package with a separate, explicit user-integration setup step. No manual source checkout for end users.
+- D3: Use a systemd user service for the shared Linux backend. Choose and document startup behavior in T06, including consent for login startup and resource use while idle. No system-level daemon or lingering after logout by default.
+- D4: Browser playback stays in the extension. Desktop playback stays in the desktop app. Panel/shortcut playback has a dedicated local controller. Stop in the panel controls its own session, not all browser/desktop sessions.
+- D5: Chrome extension installation remains a browser-controlled step. Do not silently enable developer mode or install an extension into a user's profile.
+- D6: Omarchy panel opens the desktop model manager when setup is required. Do not build a second model manager in the panel.
+- D7: No new languages, cloud services, GPU requirement, tray implementation, shell theme framework, or cross-client playback synchronization in the initial release.
+
+Ask the user if evidence requires a material change to these defaults. Select routine internal implementation details from repository code and installed APIs.
+
+## Architecture and ownership
+
+```text
+Desktop app ----------------------+
+Chrome extension -----------------+--> shared local Python TTS service
+Omarchy panel / shortcuts ---------+        |
+         |                                 +--> model catalog and lifecycle
+         +--> local playback controller    +--> offline Kokoro/Piper providers
+```
+
+The current service synthesizes audio; it does not play audio through the desktop sound device. A panel button that only calls `/synthesize` is not a complete implementation.
+
+On Linux, the service manager owns the Python process. Closing or reopening the Tauri app must not kill or duplicate that process. Preserve the app-owned process path on macOS where still needed. Reconcile the existing server-mode toggle and runtime settings with shared service ownership before changing them. New download/removal controls must not become available to arbitrary websites or unauthenticated LAN clients.
+
+Keep public API changes compatible with the existing extension where practical. Do not introduce a generic plugin framework. Put optional platform files in a clearly named directory, such as `integrations/omarchy/`, and packaging files in `packaging/arch/` if those names fit the implementation. These are proposed paths, not existing files.
+
+## Verified repository findings
+
+- F1: `README.md` markets a macOS application and gives Homebrew installation instructions. It describes the Python service, Tauri desktop app, and Chrome extension. Some headline voice counts do not match its voice table; use provider catalogs, not prose counts, when building the model UI.
+- F2: `build.sh` unconditionally requires `codesign`, `ditto`, and `xattr`, copies `libpython*.dylib`, constructs a `.app`, and can create/sign a DMG. Linux needs its own build path without removing macOS support.
+- F3: `src-tauri/src/lib.rs` resolves release resources through Tauri, also checking `_up_`. Releases require `.bundle-venv`; development uses `.venv` or `uv`. `bundled_python_runtime_complete()` requires a `.dylib` even on Linux. Merely teaching the shell script about `.so` is insufficient: relocation, loader paths, Python native modules, and executable permissions must also work.
+- F4: The same Rust file starts uvicorn, sets model/cache/output paths through Tauri app directories, starts a Unix process group, and kills that process group on service stop. Desktop settings include an FFmpeg path; changing it restarts the child service. These ownership assumptions need an explicit Linux design.
+- F5: `src-tauri/tauri.conf.json` bundles `.bundle-venv`, `service`, `config.yml`, `pyproject.toml`, and `uv.lock`. It fixes the window at 1120 by 920 pixels, disables resize/maximize, and sets CSP to null. Test Linux resource paths and usability under tiling/scaling. Scope security work to the new management surface and required behavior, not unrelated cleanup.
+- F6: `src-tauri/Cargo.toml` declares Tauri 2.10.3, tauri-build 2.5.6, and dialog/log plugins. `pyproject.toml` permits Python >=3.11 and depends on Kokoro, Piper >=1.7.0, FastAPI, uvicorn, numpy, PyYAML, and a direct spaCy English model wheel. A Python lower bound does not prove the newest system Python is supported by all native dependencies.
+- F7: `service/providers/kokoro.py` lazily creates `KPipeline(lang_code=...)`. `is_ready()` calls the loader, so readiness checks can cause model acquisition through dependencies. It configures espeak through `espeakng_loader` and `phonemizer`. Cataloged voices cover English and Spanish; the code accepts some additional language prefixes, which is not approval to add languages to this release.
+- F8: `service/providers/piper.py` downloads `.onnx` and `.onnx.json` from Hugging Face during voice loading. It uses `.part` then rename, per-voice locks, and a short espeak data path workaround. Reuse applicable safeguards, but the two-file set is not yet a complete explicit download lifecycle. Its readiness check only imports Piper; it does not prove a selected model is installed.
+- F9: `service/core/dependencies.py` already searches PATH and standard Linux binary locations, but its missing-FFmpeg message tells every user to run `brew install ffmpeg`. `tests/test_dependencies.py` asserts this text. `desktop/index.html` also contains a Homebrew FFmpeg placeholder.
+- F10: `desktop/app.js` uses HTML audio/blob URLs, native save dialogs, export requests, and drag/drop listeners. Linux MP3 generation through FFmpeg and Linux WebKit audio decoding are separate concerns.
+- F11: `extension/manifest.json` has macOS-specific marketing text, general shortcuts, and macOS overrides. The extension already talks to localhost and plays audio in an offscreen document. No extension rewrite was justified by the inspection.
+- F12: `.github/workflows/release.yml` currently builds and releases only the extension ZIP. It does not build desktop release artifacts.
+- F13: `service/app.py` currently configures permissive CORS (`allow_origins=["*"]`). Verify the full request path before adding model download/delete APIs. Loopback binding alone does not authorize callers.
+- F14: Existing tests include `test_config.py`, `test_dependencies.py`, `test_health.py`, `test_router.py`, `test_kokoro_provider.py`, `test_piper_espeak_path.py`, `test_document_chunks.py`, and `test_markdown.py`. The Rust library also contains runtime/path/error tests. No test suite was run in this planning session.
+
+## Local environment observed during planning
+
+- E1: `uname -m` returned `x86_64`; `omarchy version` returned `4.0.4-1`.
+- E2: Installed package queries returned WebKitGTK 4.1 version 2.52.6-1, GTK3 3.24.52-1, GStreamer good/libav plugins 1.28.6-3, FFmpeg 9.0.1-4, and Python 3.14.7-1. Re-query before implementation; these are one-machine observations, not release requirements.
+- E3: The package query did not return entries for `uv`, `espeak-ng`, or `gst-plugins-bad`. This does not prove corresponding tools/libraries are unavailable through another installation method.
+- E4: `omarchy-shell`, `quickshell`, `wl-paste`, and `systemctl` were found. `OMARCHY_PATH` is `/usr/share/omarchy`. The combined discovery command exited nonzero because not all queried commands were present; its trailing `omarchy --help` did not run. No exact plugin installation API was verified.
+- E5: Installed Omarchy guidance describes user shell plugins under `~/.config/omarchy/plugins/<plugin-id>/` and overrides in `~/.config/omarchy/shell.json`. Packaged files under `/usr/share/omarchy/` are read-only for this work. Confirm the actual shell/plugin API and Hyprland configuration format rather than guessing from older releases.
+
+## External sources already consulted
+
+- S1: https://v2.tauri.app/start/prerequisites/ : Tauri Linux has platform-specific system prerequisites, including WebKitGTK. Read the current Arch section before declaring package dependencies.
+- S2: https://v2.tauri.app/distribute/appimage/ : AppImage builds must respect the minimum supported glibc baseline. Audio/video applications need `bundle.linux.appimage.bundleMediaFramework`; documentation says this is fully supported on Ubuntu build systems. This is relevant only if AppImage is later chosen. Do not build an AppImage merely because Tauri supports it.
+- S3: https://v2.tauri.app/distribute/ : distribution overview, fetched but not used to establish an Arch packaging recipe.
+- S4: Local skill references: `/home/dpaluy/.pi/agent/skills/omarchy/SKILL.md` and `plugins.md` in that directory. Read `hyprland.md` before modifying bindings. Source discovery must use the installed CLI and local read-only examples.
+
+Open research includes model asset manifests and licenses, dependency-controlled downloads, exact plugin contracts, runtime relocation, and package size. Do not invent model sizes, memory requirements, performance numbers, checksums, or license permissions.
+
+## Model management contract
+
+- M1: Start with no selected TTS model. A missing model is a normal setup state, not a crashed service. Health separates service liveness, installed dependencies, installed assets, and usable voices without loading/downloading models.
+- M2: Use a bounded catalog for the existing supported voices. Each entry needs a stable ID, label, language/voice relationships, required/shared assets, source and revision, license information, download size when verified, and integrity metadata when available. Unknown size must be labeled unknown. No arbitrary URL/path installation API.
+- M3: Inventory every asset acquired by Kokoro, Hugging Face, spaCy/Misaki, Piper, and espeak-related dependencies. Distinguish installed runtime packages from optional speech assets. The existing spaCy model dependency needs an explicit decision: make it selectable with its required engine assets, or disclose any unavoidable runtime asset before installation. Do not silently ship optional models under a package label.
+- M4: Download is an explicit management action. Present all shared and voice-specific assets and disk use before consent. Handle insufficient space, offline state, HTTP failures, cancellation, duplicate requests, and app closure. Download jobs belong to the service, not the window.
+- M5: Publish an installed model only after every required file is validated. Use bounded paths under the application data location, staging files, atomic completion, and durable inventory or reproducible disk inspection. Partial files are never used for synthesis.
+- M6: Cancellation and retry are required; byte-range resume is optional and should not add complexity without need. Define cleanup and retention of partial data. Service restart must recover a truthful status rather than report a stale active job.
+- M7: Model removal is explicit. Do not remove shared files still needed by another installed model. Release cached provider objects safely; refuse removal while a synthesis/download job uses the assets. Coordinate access across actual worker threads/processes, not just UI state.
+- M8: Configure providers for local-only loading outside the approved downloader. Missing assets return a structured actionable error. Voice listing and selection never fetch data. Prove this with denied-network tests, not only mocks of the top-level download function.
+- M9: Define compatibility for existing downloaded assets. Discover and validate supported old locations or offer explicit migration. Do not delete/re-download user assets silently. Do not delete espeak path workarounds until supported installations are verified.
+- M10: Protect download, removal, and filesystem operations from arbitrary websites, path traversal, and LAN clients. Define request authorization and allowed origins compatible with the desktop, panel, and browser extension. Do not expose management APIs through server mode without a separate approved design.
+
+## Task packets and dependencies
+
+Each T-code maps to one Herdr backlog item. These packets are ready for later delegation; no thread is currently assigned. A task is complete only with observable validation and a report of changed files, tests actually run, existing failures, assumptions, and remaining blockers.
+
+### T01: Establish Linux baseline and implementation contracts
+
+Dependencies: none.
+Read the files identified above and all applicable repository instructions. Confirm the branch/base and installed Omarchy APIs. Identify existing test commands, supported Python/dependency combination, model assets and licenses, and baseline failures. Inspect shell plugin examples read-only. Record the chosen service/control boundaries and compatibility matrix. Do not install packages, download model weights, or edit host configuration without permission. Use disposable fixtures for baseline tests where possible; ask before real model acquisition.
+Acceptance: evidence-backed dependency list, test baseline, verified plugin interface, model catalog inputs, and concrete unresolved blockers. Update this plan with decisions, not speculative APIs.
+
+### T02: Port Linux runtime preparation and release resources
+
+Dependencies: T01.
+Files: `build.sh`, `src-tauri/src/lib.rs`, `src-tauri/tauri.conf.json`, dependency configuration as needed.
+Choose a reproducible Linux Python runtime strategy compatible with the package and model-consent policy. Do not rely on rolling system Python ABI or copied developer environments accidentally working. Separate macOS and Linux tools; validate native libraries, interpreter relocation, resource paths, read-only install locations, and writable XDG data/cache paths. Pin build tooling where necessary using existing project conventions.
+Acceptance: a Linux release starts outside the checkout without the developer `.venv` or shell PATH; runtime tests cover Linux/missing assets; macOS path remains valid. T12 later proves installed behavior.
+
+### T03: Implement model catalog and lifecycle APIs
+
+Dependencies: T01.
+Files: new focused service modules/endpoints plus existing config/models/health where needed.
+Implement M1-M10 backend behavior: inventory, explicit background download, progress/status, cancellation/retry, atomic validation, removal, shared assets, migration policy, and management authorization. Agree API shapes with T04/T05/T10 before those tasks start. Persist only required state. Do not log user text or allow arbitrary filesystem paths.
+Acceptance: API tests cover zero-model startup, duplicate/concurrent requests, corrupt/incomplete files, cancel/retry/restart, disk errors, in-use deletion, shared assets, and unauthorized callers. Test downloads against a disposable local fixture server.
+
+### T04: Make providers and health local-only
+
+Dependencies: T03.
+Files: `service/providers/kokoro.py`, `service/providers/piper.py`, `service/providers/router.py`, `service/api/health.py`, dependency checks/tests.
+Replace implicit acquisition with validated local catalog paths. Prevent startup/readiness/voice-list side effects. Preserve synthesis routing, chunking, speed, format, espeak workarounds, and existing supported voices. Audit transitive loader behavior, not just these two modules.
+Acceptance: missing assets produce setup-needed errors with no network attempt; installed fixture assets load through provider interfaces; approved real models synthesize offline in final integration tests. Existing provider/health tests remain meaningful.
+
+### T05: Add desktop model manager
+
+Dependencies: T03, T04.
+Files: `desktop/index.html`, `desktop/app.js`, `desktop/styles.css`, Tauri commands/capabilities only if required.
+Build catalog/status UI, required-asset consent, progress/cancel/retry, removal confirmation, and setup-needed state. Keep long downloads owned by the service; reconnect after window closure. Disable or clearly mark unavailable voices. Distinguish installed, downloading, failed, and ready without treating a live zero-model service as broken.
+Acceptance: test observable user flows, including unknown size, failed download, shared assets, removal in use, and reconnection. No network/model acquisition from simply opening the UI or selecting a voice.
+
+### T06: Add shared Linux service ownership
+
+Dependencies: T02, T04.
+Files: Linux user service definition, Rust service manager/settings, platform integration helpers.
+Make desktop/panel/browser share one backend. Define login activation, readiness, restart, port conflict, logs, environment, and directory ownership. Keep model data available across upgrades. Reconcile FFmpeg setting updates and the existing server-mode toggle with external service ownership; do not silently expand network exposure. Handle an already running standalone backend explicitly rather than killing it.
+Acceptance: desktop close does not stop the shared service, reopen does not duplicate it, model configuration persists, startup with no models is healthy/setup-needed, and startup failures are actionable. Use a disposable user/session for lifecycle validation where practical.
+
+### T07: Implement clipboard playback controller
+
+Dependencies: T04, T06.
+Select the smallest suitable existing playback dependency after inspecting the target. Retrieve clipboard text only on command. Use argument arrays/stdin, never shell interpolation of text. Support long-text chunk playback, bounded queue/state, stop/cancellation, service-not-ready errors, missing-model guidance, repeated invocation, and cleanup. Define panel status interface and session ownership for T08/T09. Preserve browser/desktop playback independence.
+Acceptance: copied text produces audio through the desktop audio system without the Tauri window open; stop halts controller audio and its queued synthesis; repeated commands do not overlap accidentally; empty/non-text clipboard and failed requests are safe; no clipboard text in logs.
+
+### T08: Implement Omarchy shell panel plugin
+
+Dependencies: T05, T07.
+Use the verified installed plugin interface. Provide status, read clipboard, stop, open app, and setup/model-manager entry. Handle missing backend/controller cleanly. Keep state polling bounded; do not poll the clipboard. Keep the plugin thin and reuse controller/service logic.
+Acceptance: plugin loads through user-owned configuration, reflects actual playback and setup state, survives shell reload, and leaves packaged Omarchy files untouched. Verify against the declared supported Omarchy version.
+
+### T09: Add shortcuts and reversible user integration
+
+Dependencies: T07, T08.
+Provide read-clipboard and stop bindings with collision detection or a user-chosen binding flow. Do not choose unverified global key combinations. Installer/setup must show the changes, use user-owned config, preserve unrelated edits, and record exactly what it owns. Make repeated setup idempotent and removal surgical. Validate Hyprland with its current supported tools after approved host changes.
+Acceptance: install/setup twice produces one integration, conflicting bindings are reported, removal preserves all unrelated configuration, and no desktop configuration changes occur from package installation without explicit setup/consent.
+
+### T10: Adapt Chrome integration to model availability
+
+Dependencies: T03, T04, T06.
+Files: extension API/store/background/popup/constants and manifest as needed.
+Keep extraction and playback behavior. Update platform wording and model-ready voice handling. Show useful setup/download-required errors; model installation is initiated only through explicit management, not synthesis. Preserve user settings and browser permission boundaries. Document opening the desktop model manager if direct launch is unavailable.
+Acceptance: installed voices work against the shared backend, absent models do not trigger downloads, stop/long text remain functional, and Chrome installation is a documented separate step. Do not promise a Store listing until its publication status is verified.
+
+### T11: Validate and fix Linux desktop behavior
+
+Dependencies: T05, T06.
+Files: Tauri window config and desktop files, only for confirmed issues.
+Check Wayland/Hyprland tiling, small/scaled displays, clipboard paste, text/Markdown drop, file dialogs, short and long playback, stop, and MP3 export. Address fixed window constraints where necessary without redesigning the app. Treat FFmpeg encoding and WebKit/GStreamer decoding separately. Use native GUI verification for claims about Tauri, not browser-only tests.
+Acceptance: documented end-to-end desktop flows work on the target. Native Linux dependency errors are actionable. No macOS regression is knowingly introduced.
+
+### T12: Build installable Arch package
+
+Dependencies: T02, T06, T08, T09, T10, T11.
+Add an auditable PKGBUILD/package recipe and release artifact assembly. Package the desktop launcher/icon, service, controller, and plugin assets with correct ownership/dependencies. End users need no Rust/Node/source checkout. Avoid root pip installation and optional model weights in the package. Declare runtime/native media dependencies, license notices, and supported architecture. Installation must not edit a running user's panel or silently fetch models.
+Acceptance: clean install, normal launcher startup, explicit integration setup, upgrade, and uninstall work in a disposable Arch/Omarchy environment. Uninstall retains user data by default. Inspect the installed artifact for missing libraries and confirm the running process uses it, not repository files.
+
+### T13: Run cross-interface and failure acceptance tests
+
+Dependencies: T12.
+Run the release checklist below with the installed artifact. Use disposable homes/model stores and local test servers; obtain consent before real model downloads, host package installation, or persistent desktop edits. Include approved real Kokoro/Piper assets to prove inference/audio behavior, plus network-denied runs. Record model identities, artifact identity, environment, and results.
+Acceptance: all required checks pass or concrete blockers are reported. Fixture tests alone cannot prove real native engine/playback readiness.
+
+### T14: Add reproducible CI and release artifact jobs
+
+Dependencies: T12; final readiness also requires T13.
+Files: `.github/workflows/release.yml` and focused build/test workflow additions.
+Run deterministic service/Rust tests, build Linux package artifacts, preserve extension ZIP delivery, and retain macOS validation where supported. Make asset-fixture tests network independent. Keep model-weight downloads out of routine tests unless explicitly configured and licensed. Document which graphical checks require target-machine verification. Preparing workflow code does not authorize pushing tags or creating releases.
+Acceptance: workflow syntax/build steps are checked using existing consumers where practical; actual executed local/CI results are distinguished. Final CI green status can be claimed only after an authorized run.
+
+### T15: Write user and maintainer documentation
+
+Dependencies: T12, T13, T14.
+Update README/install/config/troubleshooting instructions for Omarchy and macOS. Cover one supported installation route, browser setup, explicit model choice and disk use, offline use, panel/shortcut controls, login startup, logs, restart, port conflicts, upgrade/removal, and data retention. Document exact supported versions and known limitations. Include third-party model/runtime license notices and verify redistribution rights rather than guessing.
+Acceptance: a new user can follow the published instructions without cloning the source or starting a server manually; every command matches the artifact tested in T13.
+
+### T16: Approve and publish the first Omarchy release
+
+Dependencies: T13, T14, T15 and explicit user approval.
+Present release evidence, artifacts/checksums, supported target, known limitations, license checks, and distribution destination. Ask for authorization before external writes, tags, releases, PRs, or registry submissions. Verify the account/repository before publishing and verify uploaded artifacts afterward. Do not submit to AUR unless asked.
+Acceptance: approved artifacts match tested builds and public instructions. If approval has not been given, remain pending with a local release candidate, not a fabricated publication claim.
+
+## Execution order and handoff rules
+
+- A1: Start with T01. Then T02 and T03 can proceed independently after contracts are settled.
+- A2: T04 follows T03. T05 and T06 can then proceed once their dependencies are satisfied. Coordinate changes to the Rust manager; avoid concurrent edits to the same ownership logic.
+- A3: T07 follows shared service/provider readiness; T08/T09 follow controller contracts. T10 and T11 can proceed independently when their prerequisites are complete.
+- A4: T12 integrates packaging. T13 and T14 validate it. T15 documents tested behavior; T16 is a user approval gate.
+- A5: Follow the configured Herdr thread profile and parallel cap. Do not change safety settings, profiles, or start agents merely because this backlog exists. Ask the user to delegate tasks when ready.
+- A6: Every code task uses meaningful regression tests and preserves unrelated user changes. No source-string assertion tests, speculative abstractions, broad cleanup, or removal of compatibility paths without consumer/migration evidence.
+
+## Release acceptance checklist
+
+- V1: Fresh installation contains no silently selected optional TTS model. Startup, health, voice listing, selection, and attempted synthesis do not download assets.
+- V2: Explicit download lists shared/voice assets and verified sizes or unknown status. Cancel, retry, insufficient space, corruption, concurrency, and interrupted restart have truthful states.
+- V3: Removal protects active jobs and shared assets. Existing supported model caches are preserved or explicitly migrated.
+- V4: English/Spanish Kokoro and Russian Piper work offline with user-approved installed assets. Record which representative voices were actually exercised; do not infer all voices passed.
+- V5: Desktop, Chrome, and panel/shortcut paths all work against one service. Closing the desktop leaves panel/browser usable. Each playback surface has correct stop behavior under the documented ownership contract.
+- V6: Clipboard reads require explicit action. Quoting/metacharacters and non-text content cannot cause command execution. New management APIs reject unauthorized origin/caller, path traversal, and unintended LAN access.
+- V7: Wayland launch, tiling/scaling, file drop/save, short/long playback, and MP3 export pass native tests. Missing media dependencies produce useful diagnostics.
+- V8: Startup/restart, existing-service conflict, setup twice, upgrade, and uninstall are tested in disposable environments. User config and models survive where documented.
+- V9: Release starts from its installed location with the development checkout unavailable. Process identity confirms the tested binary/runtime is the new artifact.
+- V10: Linux tests/build pass; macOS checks are run on a suitable environment or explicitly reported unverified. Documentation and license notices match the actual artifact.
+
+## Deferred or unknown
+
+- U1: Exact Python version, CPU/GPU dependency selection, package size, runtime relocation approach, and real engine performance are not established.
+- U2: Exact Omarchy plugin installation/schema and minimum supported shell version need installed-source verification.
+- U3: Complete Kokoro/spaCy/Misaki/voice asset list, hashes, download sizes, and licenses need source verification. Piper file pairs alone do not describe the whole engine dependency chain.
+- U4: Playback dependency and detailed controller protocol are not chosen. Do not turn the TTS HTTP service into an audio server without evidence that this is simpler and safe.
+- U5: Migration of existing model caches and desktop settings needs supported-installation evidence.
+- U6: Shared Linux service behavior for the existing LAN server-mode toggle needs a concrete design. Model management is local-only by default.
+- U7: Neither Linux build success nor baseline test success has been established. No performance or time estimate is justified yet.
