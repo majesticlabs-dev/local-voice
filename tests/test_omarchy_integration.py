@@ -1,6 +1,9 @@
 """Exercise the user integration against disposable homes and effective bind fixtures."""
 
 import json
+import importlib.machinery
+import importlib.util
+from unittest.mock import patch
 import os
 from pathlib import Path
 import subprocess
@@ -9,6 +12,10 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "integrations/omarchy/local-voice-integration"
+loader = importlib.machinery.SourceFileLoader("integration", str(SCRIPT))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+integration = importlib.util.module_from_spec(spec)
+loader.exec_module(integration)
 
 
 class IntegrationTests(unittest.TestCase):
@@ -57,6 +64,33 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.bindings.read_text(), original + "# later user edit\n")
         self.assertFalse(self.record.exists())
         self.assertEqual(self.command("remove", "--apply").returncode, 0)
+
+    def test_remove_detects_edit_after_initial_read(self):
+        args = ("setup", "--read", "SUPER ALT + V", "--stop", "SUPER ALT + S", "--apply")
+        self.assertEqual(self.command(*args).returncode, 0)
+        original = self.bindings.read_text()
+        def edit_before_apply(*args, **kwargs):
+            self.bindings.write_text(original + "# concurrent edit\n")
+        with patch.object(integration.Path, "home", return_value=self.home), patch.object(integration, "print", side_effect=edit_before_apply, create=True):
+            with self.assertRaisesRegex(ValueError, "changed during removal"):
+                integration.run(["remove", "--apply"])
+        self.assertEqual(self.bindings.read_text(), original + "# concurrent edit\n")
+        self.assertTrue(self.record.exists())
+
+    def test_setup_rollback_leaves_absent_file_absent_and_preserves_key_case(self):
+        self.bindings.unlink()
+        self.assertEqual(integration.shortcut("super alt + XF86AudioPlay")[1], "XF86AudioPlay")
+        with patch.object(integration.Path, "home", return_value=self.home), patch.object(integration, "effective_bindings", return_value=[]):
+            original_write = integration.atomic_write
+            def fail_record(path, text, mode=None):
+                if path == self.record:
+                    raise OSError("record write failed")
+                return original_write(path, text, mode)
+            with patch.object(integration, "atomic_write", side_effect=fail_record):
+                with self.assertRaises(OSError):
+                    integration.run(["setup", "--read", "super alt + XF86AudioPlay", "--stop", "super alt + S", "--apply"])
+        self.assertFalse(self.bindings.exists())
+        self.assertFalse(self.record.exists())
 
     def test_effective_collision_blocks_all_writes(self):
         self.fixture.write_text(json.dumps([{"modmask": 72, "key": "V", "submap": "", "description": "Existing action"}]))

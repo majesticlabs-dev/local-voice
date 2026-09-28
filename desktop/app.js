@@ -230,15 +230,10 @@ function applyHealthState(health) {
 
   state.startupErrorTitle = 'Startup issue';
   state.startupError = '';
-  if (health?.status === 'setup_needed') {
-    state.healthPhase = 'setup_needed';
-    state.healthText = 'Choose models to download';
-  } else {
-    state.healthPhase = health?.ready ? 'ready' : 'starting';
-    state.healthText = health?.ready
-      ? `Service ready (${health.engine})`
-      : `Service warming up (${health.engine})`;
-  }
+  state.healthPhase = health?.ready ? 'ready' : 'starting';
+  state.healthText = health?.ready
+    ? `Service ready (${health.engine})`
+    : `Service warming up (${health.engine})`;
 }
 
 async function maybeNotifyStartupIssue() {
@@ -454,7 +449,11 @@ async function healthPoll() {
     const health = await fetchJson('/health');
     applyHealthState(health);
     if (!state.voicesLoaded) {
-      await loadVoices();
+      try {
+        await loadVoices();
+      } catch (_) {
+        // Voice listing is separate from service health.
+      }
     }
   } catch (_) {
     try {

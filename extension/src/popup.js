@@ -8,6 +8,7 @@ let settings;
 let api;
 let serviceReady = false;
 let selectedVoiceAvailable = true;
+let setupNeeded = false;
 let currentJob = {
   status: JOB_STATUS.IDLE,
   chunksTotal: 0,
@@ -60,7 +61,8 @@ async function checkHealth() {
     const data = await api.health();
     const engineLabel = data.engine || 'Local Voice';
     const blocking = blockingDependencies(data.dependencies);
-    serviceReady = (Boolean(data.ready) || data.status === 'setup_needed') && blocking.length === 0;
+    setupNeeded = data.status === 'setup_needed' && blocking.length === 0;
+    serviceReady = (Boolean(data.ready) || setupNeeded) && blocking.length === 0;
     if (blocking.length) {
       dot.className = 'health-dot error';
       label.textContent = blocking[0].name === 'ffmpeg' ? 'ffmpeg missing' : 'Service issue';
@@ -75,6 +77,7 @@ async function checkHealth() {
     }
   } catch (_) {
     serviceReady = false;
+    setupNeeded = false;
     dot.className = 'health-dot error';
     label.textContent = 'Service unavailable';
     label.title = '';
@@ -134,7 +137,11 @@ function updateUI(job) {
     [JOB_STATUS.ERROR]: job.errorMessage || 'No readable text found',
   };
 
-  statusText.textContent = labels[job.status] || 'Ready';
+  statusText.textContent = job.status === JOB_STATUS.IDLE && !selectedVoiceAvailable
+    ? 'Open desktop Model Manager to download this voice'
+    : job.status === JOB_STATUS.IDLE && setupNeeded
+      ? 'Open desktop Model Manager to download a language'
+      : labels[job.status] || 'Ready';
   statusText.title = job.errorMessage || '';
   statusText.className = '';
   if ([JOB_STATUS.SYNTHESIZING, JOB_STATUS.PLAYING].includes(job.status)) {

@@ -31,9 +31,18 @@ fn probe(port: u16) -> bool {
         return false;
     }
     let mut buffer = [0; 64];
-    stream.read(&mut buffer).is_ok_and(|n| {
-        buffer[..n].starts_with(b"HTTP/1.1 200") || buffer[..n].starts_with(b"HTTP/1.0 200")
-    })
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match stream.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                filled += n;
+                if buffer[..filled].contains(&b'\n') { break; }
+            }
+            Err(_) => break,
+        }
+    }
+    buffer[..filled].starts_with(b"HTTP/1.1 200") || buffer[..filled].starts_with(b"HTTP/1.0 200")
 }
 
 fn port_occupied(port: u16) -> bool {
@@ -206,6 +215,22 @@ mod tests {
         }
         assert!(management_route("job", Some("../health")).is_err());
         assert!(management_route("download", Some("abc")).is_err());
+    }
+
+    #[test]
+    fn port_probe_accepts_split_status_line() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut client, _) = listener.accept().unwrap();
+            let mut request = [0; 128];
+            client.read(&mut request).unwrap();
+            client.write_all(b"HTTP/1.").unwrap();
+            std::thread::sleep(Duration::from_millis(30));
+            client.write_all(b"1 200 OK\r\n\r\n").unwrap();
+        });
+        assert!(probe(port));
+        server.join().unwrap();
     }
 
     #[test]

@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 import secrets
 import stat
-import sys
 
 
 def prepare(home: Path, runtime: Path, cache: Path) -> Path:
@@ -11,10 +10,13 @@ def prepare(home: Path, runtime: Path, cache: Path) -> Path:
     models = data / "service-models"
     output = data / "service-output"
     cache_dir = cache / "dev.majesticlabs.localvoice/service-cache"
+    if data.is_symlink():
+        raise RuntimeError("Refusing symlink data directory")
+    data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(data, 0o700)
     for directory in (models, output, cache_dir, runtime):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     token_file = data / "management-token"
-    data.mkdir(mode=0o700, parents=True, exist_ok=True)
     if token_file.is_symlink():
         raise RuntimeError("Refusing symlink management token")
     try:

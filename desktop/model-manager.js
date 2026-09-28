@@ -120,6 +120,7 @@ export function createModelManager({ root, request, confirm, storage, onCatalog 
     onCatalog(catalog);
     migration = (await call('/migration')).candidates;
     const id = storage.getItem(JOB_KEY);
+    if (!id) job = null;
     if (id) {
       try {
         job = await call(`/downloads/${encodeURIComponent(id)}`);

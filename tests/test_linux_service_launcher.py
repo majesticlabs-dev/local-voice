@@ -22,7 +22,9 @@ class LauncherTests(unittest.TestCase):
                 model_dir = Path(os.environ["LV_MODELS_DIR"])
                 self.assertTrue(model_dir.is_dir())
                 self.assertFalse(any(model_dir.iterdir()))
-                self.assertEqual((root / ".local/share/dev.majesticlabs.localvoice/management-token").stat().st_mode & 0o777, 0o600)
+                data = root / ".local/share/dev.majesticlabs.localvoice"
+                self.assertEqual(data.stat().st_mode & 0o777, 0o700)
+                self.assertEqual((data / "management-token").stat().st_mode & 0o777, 0o600)
                 launcher.prepare(root, root / "runtime", root / "cache")
                 self.assertEqual(os.environ["LV_MANAGEMENT_TOKEN"], token)
                 self.assertEqual(os.environ["LV_HOST"], "127.0.0.1")

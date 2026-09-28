@@ -144,6 +144,7 @@ def _run(job: Job) -> None:
                     dest = _safe_path(root, asset.path)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(_safe_path(stage, asset.path), dest)
+                    catalog.invalidate(dest)
                 with _lock:
                     job.status = "completed"
         else:

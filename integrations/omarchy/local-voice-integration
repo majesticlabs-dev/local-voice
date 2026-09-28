@@ -16,12 +16,12 @@ MASKS = {"SHIFT": 1, "CTRL": 4, "ALT": 8, "SUPER": 64}
 
 
 def shortcut(value):
-    sides = value.upper().split("+")
+    sides = value.split("+")
     if len(sides) != 2:
         raise ValueError(f"Invalid shortcut: {value!r}. Use e.g. 'SUPER ALT + V'")
-    mods = sides[0].split()
+    mods = sides[0].upper().split()
     key = sides[1].strip()
-    if not mods or not re.fullmatch(r"[A-Z0-9_]+", key):
+    if not mods or not re.fullmatch(r"[A-Za-z0-9_]+", key):
         raise ValueError(f"Invalid shortcut: {value!r}. Use e.g. 'SUPER ALT + V'")
     if len(set(mods)) != len(mods) or any(m not in MASKS for m in mods):
         raise ValueError(f"Invalid modifiers in {value!r}")
@@ -33,7 +33,11 @@ def atomic_write(path, text, mode=None):
     fd, name = tempfile.mkstemp(prefix=".local-voice-", dir=path.parent)
     try:
         if mode is not None:
-            os.fchmod(fd, mode)
+            try:
+                os.fchmod(fd, mode)
+            except OSError:
+                os.close(fd)
+                raise
         with os.fdopen(fd, "w") as stream:
             stream.write(text)
         os.replace(name, path)
@@ -79,8 +83,10 @@ def run(argv=None):
     state = home / ".config/local-voice/omarchy-integration.json"
     safe_file(bindings)
     safe_file(state)
-    original = bindings.read_text() if bindings.exists() else ""
-    record = json.loads(state.read_text()) if state.exists() else None
+    existed = bindings.exists()
+    original = bindings.read_text() if existed else ""
+    record_text = state.read_text() if state.exists() else None
+    record = json.loads(record_text) if record_text is not None else None
     if record is not None and (not isinstance(record, dict) or record.get("version") != 1):
         raise ValueError("Unknown integration record. No files changed.")
 
@@ -101,8 +107,15 @@ def run(argv=None):
         print(f"Remove only this block from {bindings}:\n{block}")
         print(f"Remove ownership record: {state}")
         if args.apply:
-            atomic_write(bindings, updated, bindings.stat().st_mode & 0o777)
-            state.unlink()
+            if not bindings.exists() or bindings.read_text() != original or state.read_text() != record_text:
+                raise ValueError("Integration changed during removal. No files changed.")
+            mode = bindings.stat().st_mode & 0o777
+            atomic_write(bindings, updated, mode)
+            try:
+                state.unlink()
+            except OSError:
+                atomic_write(bindings, original, mode)
+                raise
         return
 
     if record:
@@ -122,9 +135,10 @@ def run(argv=None):
     if read[:2] == stop[:2]:
         raise ValueError("Read and stop use the same shortcut.")
     collisions = []
+    binds = effective_bindings()
     for mask, key, _ in (read, stop):
-        for bind in effective_bindings():
-            if bind.get("modmask") == mask and str(bind.get("key", "")).upper() == key and bind.get("submap", "") == "":
+        for bind in binds:
+            if bind.get("modmask") == mask and str(bind.get("key", "")) == key and bind.get("submap", "") == "":
                 collisions.append(f"{mask}+{key}: {bind.get('description') or bind.get('dispatcher')}")
     if collisions:
         raise ValueError("Effective binding conflicts:\n" + "\n".join(collisions) + "\nChoose different shortcuts.")
@@ -139,7 +153,7 @@ def run(argv=None):
     print("No plugin, service, models, or system files will be changed.")
     if args.apply:
         # Recheck immediately before the write. Hyprland config must be reloaded by the user.
-        if bindings.exists() and bindings.read_text() != original:
+        if bindings.exists() != existed or (existed and bindings.read_text() != original):
             raise ValueError("Bindings changed during setup. No files changed.")
         if state.exists():
             raise ValueError("Ownership record appeared during setup. No files changed.")
@@ -147,7 +161,10 @@ def run(argv=None):
         try:
             atomic_write(state, json.dumps({"version": 1, "block": block, "prefix": prefix}, indent=2) + "\n", 0o600)
         except Exception:
-            atomic_write(bindings, original, bindings.stat().st_mode & 0o777)
+            if existed:
+                atomic_write(bindings, original, bindings.stat().st_mode & 0o777)
+            else:
+                bindings.unlink()
             raise
         print("Run 'hyprctl reload' and 'hyprctl configerrors' in the target session to validate.")
 

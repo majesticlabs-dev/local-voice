@@ -165,7 +165,7 @@ case "$build_platform" in
   Linux)
     parse_build_args "$@"
     if [[ ${#requested_bundles[@]} -ne 1 || "${requested_bundles[0]}" != "deb" ]]; then
-      echo "Linux builds support only --bundles deb (Arch packaging is handled in T12)." >&2
+      echo "Linux builds support only --bundles deb." >&2
       exit 1
     fi
     require_cmd uv
@@ -258,7 +258,7 @@ prepare_linux_python_runtime() {
   # Keep the dependency environment disposable. Never bundle absolute venv links,
   # pyvenv.cfg, or the build machine's interpreter location.
   UV_PROJECT_ENVIRONMENT="$BUILD_VENV_DIR" uv sync --locked --python "$python_bin" \
-    --managed-python --no-install-project --no-install-package en-core-web-sm --link-mode copy
+    --managed-python --no-install-project --link-mode copy
   staging="$ROOT_DIR/.bundle-venv.tmp"
   rm -rf "$staging"
   cp -a "$source_root" "$staging"

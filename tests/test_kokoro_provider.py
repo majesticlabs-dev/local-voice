@@ -3,6 +3,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 import types
 import unittest
 from pathlib import Path
@@ -86,6 +89,35 @@ assert fallback.backend.phonemize(['hello'])
 
         self.assertEqual(FakeWrapper.library_path, "/tmp/libespeak-ng.dylib")
         self.assertEqual(FakeWrapper.data_path, "/tmp/espeakng_loader")
+
+
+class ConcurrentLoadTest(unittest.TestCase):
+    def test_espeak_copy_is_published_only_once_complete(self):
+        with tempfile.TemporaryDirectory(prefix="lv spaced ") as temp:
+            data = Path(temp) / "espeak-ng-data"
+            data.mkdir()
+            (data / "phontab").write_text("ready")
+            original = kokoro.shutil.copytree
+            def slow_copy(*args):
+                time.sleep(.05)
+                return original(*args)
+            with patch.object(kokoro, "_espeak_staging", None), patch.object(kokoro.shutil, "copytree", side_effect=slow_copy) as copy:
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    roots = list(pool.map(kokoro._prepare_espeak_data_root, [data] * 8))
+                self.assertEqual(copy.call_count, 1)
+                self.assertEqual(len(set(roots)), 1)
+                self.assertTrue((roots[0] / "espeak-ng-data/phontab").exists())
+                kokoro._espeak_staging.cleanup()
+
+    def test_first_pipeline_created_once(self):
+        from unittest.mock import Mock
+        create = Mock(side_effect=lambda **kw: object())
+        fake = types.SimpleNamespace(KPipeline=create)
+        with patch.object(kokoro, "_kokoro", fake), patch.dict(sys.modules, {"kokoro": types.SimpleNamespace(KModel=lambda **kw: object())}), patch.object(kokoro, "_pipelines", {}):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                pipelines = list(pool.map(kokoro._load_kokoro, ["e"] * 8))
+            self.assertTrue(all(p is pipelines[0] for p in pipelines))
+            self.assertEqual(create.call_count, 1)
 
 
 class IsReadyTest(unittest.TestCase):

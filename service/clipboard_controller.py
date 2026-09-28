@@ -166,15 +166,18 @@ def serve(path):
                     connection, _ = listener.accept()
                     with connection:
                         connection.settimeout(2)
-                        command = connection.recv(128).decode().strip()
-                        if command == "read-clipboard":
-                            controller.read_clipboard()
-                        elif command == "stop":
-                            controller.stop()
-                        elif command != "status":
-                            connection.sendall(b'{"state":"error","error":"Unknown command"}')
+                        try:
+                            command = connection.recv(128).decode().strip()
+                            if command == "read-clipboard":
+                                controller.read_clipboard()
+                            elif command == "stop":
+                                controller.stop()
+                            elif command != "status":
+                                connection.sendall(b'{"state":"error","error":"Unknown command"}')
+                                continue
+                            connection.sendall(json.dumps(controller.status()).encode())
+                        except (OSError, UnicodeDecodeError):
                             continue
-                        connection.sendall(json.dumps(controller.status()).encode())
             finally:
                 controller.stop()
                 path.unlink(missing_ok=True)

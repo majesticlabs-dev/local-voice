@@ -137,6 +137,26 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("Private phrase", json.dumps(controller.status()))
         self.assertFalse(self.played.exists())
 
+    def test_bad_socket_clients_do_not_stop_daemon(self):
+        root = Path(self.tmp.name)
+        process = subprocess.Popen([sys.executable, "-m", "service.clipboard_controller", "serve"],
+                                   env=os.environ.copy(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: (process.terminate(), process.wait(timeout=3)) if process.poll() is None else None)
+        path = root / "local-voice/controller.sock"
+        self.wait_for(path.exists)
+        for payload in (b"\xff", None, b"unknown\n"):
+            with socket.socket(socket.AF_UNIX) as client:
+                client.connect(str(path))
+                if payload is not None:
+                    client.sendall(payload)
+                else:
+                    time.sleep(2.2)
+            self.assertIsNone(process.poll())
+            with socket.socket(socket.AF_UNIX) as client:
+                client.connect(str(path))
+                client.sendall(b"status\n")
+                self.assertEqual(json.loads(client.recv(4096))["state"], "idle")
+
     def test_socket_status_and_stop_do_not_read_clipboard(self):
         root = Path(self.tmp.name)
         process = subprocess.Popen([sys.executable, "-m", "service.clipboard_controller", "serve"],

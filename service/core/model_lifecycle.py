@@ -72,6 +72,7 @@ def remove(languages: list[str]) -> dict:
         _release(_required(requested))
         for _, path in paths:
             path.unlink()
+            catalog.invalidate(path)
         return {"removed": [key for key, _ in paths], "languages": sorted(requested)}
 
 
@@ -141,6 +142,7 @@ def migrate(candidate_ids: list[str]) -> dict:
                 model_downloads._safe_path(root, asset.path)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(temporary, dest)
+                catalog.invalidate(dest)
             return {"migrated": [asset.id for asset, _, _ in staged]}
         finally:
             shutil.rmtree(stage, ignore_errors=True)

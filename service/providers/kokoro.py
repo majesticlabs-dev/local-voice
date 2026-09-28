@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 
 from .base import TTSProvider
 from ..core.audio import wav_from_pcm, convert_to_mp3
@@ -31,6 +32,7 @@ def _lang_code_for_voice(voice: str) -> str:
 
 
 _espeak_staging: tempfile.TemporaryDirectory | None = None
+_load_lock = threading.RLock()
 
 
 def _prepare_espeak_data_root(data_path: Path) -> Path:
@@ -42,10 +44,16 @@ def _prepare_espeak_data_root(data_path: Path) -> Path:
     if " " not in str(direct_root) and len(os.fsencode(data_path)) < 100:
         return direct_root
 
-    if _espeak_staging is None:
-        _espeak_staging = tempfile.TemporaryDirectory(prefix="lv-espeak-")
-        shutil.copytree(data_path, Path(_espeak_staging.name) / "espeak-ng-data")
-    return Path(_espeak_staging.name)
+    with _load_lock:
+        if _espeak_staging is None:
+            staging = tempfile.TemporaryDirectory(prefix="lv-espeak-")
+            try:
+                shutil.copytree(data_path, Path(staging.name) / "espeak-ng-data")
+            except Exception:
+                staging.cleanup()
+                raise
+            _espeak_staging = staging
+        return Path(_espeak_staging.name)
 
 
 def _configure_espeak_backend() -> None:
@@ -61,8 +69,12 @@ def _configure_espeak_backend() -> None:
 
 
 def _load_kokoro(lang_code: str = DEFAULT_LANG_CODE):
-    """Import kokoro once and return the pipeline for `lang_code`, creating it
-    on first use. Pipelines are cached per language."""
+    """Return the cached pipeline, or initialize it under the shared lock."""
+    with _load_lock:
+        return _load_kokoro_locked(lang_code)
+
+
+def _load_kokoro_locked(lang_code):
     global _kokoro
     if _kokoro is None:
         try:
@@ -197,7 +209,8 @@ class KokoroProvider(TTSProvider):
 
     def release_assets(self, assets: set[str]) -> None:
         if any(key.startswith("kokoro-") or key == "spacy-en-core-web-sm" for key in assets):
-            _pipelines.clear()
+            with _load_lock:
+                _pipelines.clear()
 
     def cancel(self, job_id: str) -> None:
         # Kokoro runs synchronously per call — cancellation handled at job layer

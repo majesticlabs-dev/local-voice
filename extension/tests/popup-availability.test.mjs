@@ -18,11 +18,12 @@ test('popup marks unavailable voices and retains the stored selection', async ()
     },
     createElement: element,
   };
+  let replyState;
   globalThis.chrome = {
     storage: { local: { get: async () => ({}), set: async () => {} } },
     runtime: {
       getManifest: () => ({ version: '1.0' }),
-      sendMessage: (_message, callback) => callback?.({}),
+      sendMessage: (_message, callback) => { replyState = callback; },
       onMessage: { addListener() {} },
     },
   };
@@ -40,6 +41,8 @@ test('popup marks unavailable voices and retains the stored selection', async ()
   assert.match(voices.children[0].textContent, /not installed/);
   assert.equal(voices.children[1].disabled, false);
   assert.equal(nodes.get('#btn-speak').disabled, true);
+  assert.match(nodes.get('#status-text').textContent, /Model Manager/);
+  replyState({ job: { status: 'idle', chunksTotal: 0, chunksDone: 0 } });
   assert.match(nodes.get('#status-text').textContent, /Model Manager/);
   voices.onchange({ target: { value: 'ef_dora', selectedOptions: [voices.children[1]] } });
   await new Promise((resolve) => setTimeout(resolve, 10));

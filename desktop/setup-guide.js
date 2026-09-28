@@ -1,5 +1,5 @@
 export function noVerifiedVoice(catalog) {
-  return !catalog?.languages?.some((language) => language.voices.some((voice) => voice.installed));
+  return !catalog?.languages?.some((language) => language.voices?.some((voice) => voice.installed));
 }
 
 export function createSetupGuide(openModels, notify) {

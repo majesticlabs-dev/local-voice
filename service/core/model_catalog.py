@@ -6,6 +6,30 @@ revisions; inventory verifies file content rather than trusting file size.
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+from threading import Lock
+
+_verified: dict[Path, tuple[tuple[int, int, int, int, str], str]] = {}
+_verified_lock = Lock()
+
+
+def invalidate(path: Path) -> None:
+    with _verified_lock:
+        _verified.pop(path, None)
+
+
+def _state(path: Path, size: int, mtime_ns: int, ino: int, ctime_ns: int, digest: str) -> str:
+    key = (size, mtime_ns, ino, ctime_ns, digest)
+    with _verified_lock:
+        cached = _verified.get(path)
+        if cached is None or cached[0] != key:
+            matches = _digest(path) == digest
+            after = path.stat()
+            if (after.st_size, after.st_mtime_ns, after.st_ino, after.st_ctime_ns) != key[:4]:
+                _verified.pop(path, None)
+                return "invalid"
+            cached = (key, "verified" if matches else "invalid")
+            _verified[path] = cached
+        return cached[1]
 
 from .config import config
 
@@ -33,13 +57,14 @@ class Asset:
         components = (root, *[root.joinpath(*Path(self.path).parts[:i]) for i in range(1, len(Path(self.path).parts) + 1)])
         safe = not any(part.is_symlink() for part in components)
         try:
-            size = path.stat().st_size if safe and path.is_file() else None
+            info = path.stat() if safe and path.is_file() else None
+            size = info.st_size if info else None
         except OSError:
             size = None
         try:
             state = "absent" if size is None else (
                 "invalid" if self.size_bytes != size else (
-                    "verified" if self.sha256 and _digest(path) == self.sha256 else
+                    _state(path, info.st_size, info.st_mtime_ns, info.st_ino, info.st_ctime_ns, self.sha256) if self.sha256 else
                     "present_unverified" if not self.sha256 else "invalid"
                 )
             )

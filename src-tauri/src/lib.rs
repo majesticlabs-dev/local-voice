@@ -130,16 +130,24 @@ struct ServiceInfo {
 }
 
 #[tauri::command]
-fn get_service_state(
+async fn get_service_state(
     state: State<'_, ServiceManager>,
     config: State<'_, AppConfigState>,
 ) -> Result<ServiceInfo, String> {
+    #[cfg(target_os = "linux")]
+    let port = config.0.service.port;
+    #[cfg(target_os = "linux")]
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut probe = ServiceRuntime::default();
+        linux_service::refresh(&mut probe, port)?;
+        Ok::<_, String>(probe.last_error)
+    }).await.map_err(|e| e.to_string())??;
     let mut runtime = state
         .0
         .lock()
         .map_err(|_| "Service state lock poisoned".to_string())?;
     #[cfg(target_os = "linux")]
-    linux_service::refresh(&mut runtime, config.0.service.port)?;
+    { runtime.last_error = result; }
     #[cfg(not(target_os = "linux"))]
     refresh_service_runtime(&mut runtime)?;
     Ok(service_info(&runtime, &config.0))

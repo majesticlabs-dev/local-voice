@@ -278,7 +278,7 @@ textarea {
   font-size: 0.92rem;
 }
 
-.model-dialog {
+.settings-dialog.model-dialog {
   max-height: min(90vh, 850px);
   overflow: auto;
 }
