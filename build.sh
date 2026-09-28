@@ -282,11 +282,12 @@ prepare_linux_python_runtime() {
   local probe
   probe="$(mktemp -d)"
   cp -a --reflink=auto "$BUNDLED_RUNTIME_DIR" "$probe/runtime"
+  cp -a "$ROOT_DIR/service" "$probe/service"
   chmod -R a-w "$probe/runtime"
   if ! (cd "$probe" && env -i HOME="$probe" PATH=/usr/bin:/bin \
-      PYTHONHOME="$probe/runtime" PYTHONNOUSERSITE=1 \
+      PYTHONHOME="$probe/runtime" PYTHONPATH="$probe" PYTHONNOUSERSITE=1 \
       "$probe/runtime/bin/python" -c \
-      'import fastapi, uvicorn, numpy, yaml, torch, kokoro, piper; import ssl, sqlite3; print("Relocated Python runtime imports succeeded")'); then
+      'import service.app, torch, kokoro, piper; import ssl, sqlite3; assert torch.version.cuda is None; print("Relocated CPU Python runtime imports succeeded")'); then
     chmod -R u+w "$probe/runtime"
     rm -rf "$probe"
     echo "Relocated Linux runtime failed its import check." >&2
