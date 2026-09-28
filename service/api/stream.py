@@ -11,6 +11,7 @@ from ..core.models import StreamRequest, StreamResponse, StreamChunkInfo
 from ..core.chunking import chunk_text
 from ..core.jobs import registry
 from ..core.cache import cache_key, get_cached, put_cached
+from ..core.setup import local_voice_paths
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -73,9 +74,7 @@ async def stream(req: StreamRequest):
     if not req.text.strip():
         raise HTTPException(400, "Empty text")
 
-    provider = _get_provider()
-    if not provider.is_ready():
-        raise HTTPException(503, "TTS engine not ready")
+    local_voice_paths(req.voice)
 
     job_id = req.session_id or str(uuid.uuid4())
     job = registry.create(job_id)

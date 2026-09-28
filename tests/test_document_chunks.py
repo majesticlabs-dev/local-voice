@@ -59,6 +59,7 @@ class DocumentApiTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(config, 'output_dir', Path(output)), \
                 mock.patch.object(stream, 'registry', registry), \
                 mock.patch.object(stream, '_get_provider', return_value=provider), \
+                mock.patch.object(stream, 'local_voice_paths'), \
                 mock.patch.object(stream, 'get_cached', return_value=None), \
                 mock.patch.object(stream, 'put_cached'):
             result = await stream.stream(StreamRequest(text=DOCUMENT))
@@ -102,6 +103,7 @@ class DocumentApiTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(config, 'max_input_length', 100), \
                 mock.patch.object(stream, 'registry', registry), \
                 mock.patch.object(stream, '_get_provider', return_value=provider), \
+                mock.patch.object(stream, 'local_voice_paths'), \
                 mock.patch.object(stream, '_synthesize_chunks', side_effect=worker), \
                 mock.patch.object(stream, 'get_cached', return_value=None), \
                 mock.patch.object(stream, 'put_cached'):

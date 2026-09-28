@@ -87,7 +87,7 @@ def provider_dependency_status(
         if model_name:
             detail += f" ({model_name})"
     else:
-        detail = f"{provider_name} engine is installed but not ready yet"
+        detail = f"{provider_name} has no verified local voice; model setup may be required"
 
     return {
         "name": provider_name,

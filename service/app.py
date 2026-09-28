@@ -1,11 +1,13 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import config
 from .core.dependencies import ProviderStatus, runtime_dependencies
 from .providers.base import TTSProvider
+from .core.setup import SetupNeeded
 from .providers.kokoro import KokoroProvider
 from .api import export, health, model_management, preprocess, stop, stream, synthesize, voices
 
@@ -16,6 +18,14 @@ logging.basicConfig(
 logger = logging.getLogger("local_voice")
 
 app = FastAPI(title="Local Voice TTS", version="1.1.1")
+
+
+@app.exception_handler(SetupNeeded)
+async def setup_needed(_request: Request, exc: SetupNeeded):
+    return JSONResponse(status_code=503, content={
+        "error": "setup_needed", "voice": exc.voice, "assets": exc.assets,
+        "detail": str(exc),
+    })
 
 app.add_middleware(
     CORSMiddleware,

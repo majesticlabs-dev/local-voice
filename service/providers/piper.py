@@ -1,22 +1,14 @@
+import importlib.util
 import logging
-import os
 import tempfile
 import threading
-import urllib.request
 from pathlib import Path
 
 from .base import TTSProvider
 from ..core.audio import wav_from_pcm, convert_to_mp3
-from ..core.config import config
+from ..core.setup import local_voice_paths, has_local_voice
 
 logger = logging.getLogger(__name__)
-
-# Piper voices are hosted on HuggingFace; downloaded on first use.
-HF_VOICES_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
-
-
-def _models_dir() -> Path:
-    return config.models_dir / "piper"
 
 # espeak-ng keeps its data directory in a fixed-size internal buffer (~160
 # bytes). Longer paths are silently rejected and espeak falls back to the
@@ -51,21 +43,7 @@ def _espeak_data_dir() -> str:
 
 # voice id -> (label, gender, path under HF_VOICES_BASE)
 RUSSIAN_VOICES = {
-    "ru_RU-irina-medium": (
-        "Irina (Russian)",
-        "f",
-        "ru/ru_RU/irina/medium/ru_RU-irina-medium",
-    ),
-    "ru_RU-dmitri-medium": (
-        "Dmitri (Russian)",
-        "m",
-        "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium",
-    ),
-    "ru_RU-ruslan-medium": (
-        "Ruslan (Russian)",
-        "m",
-        "ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium",
-    ),
+    "ru_RU-dmitri-medium": ("Dmitri (Russian)", "m"),
 }
 
 _voices: dict = {}
@@ -82,50 +60,9 @@ def _lock_for(voice_id: str) -> threading.Lock:
         return lock
 
 
-def _download_file(url: str, dest: Path) -> None:
-    """Atomic via .part rename: a truncated file must never look complete."""
-    part_path = Path(f"{dest}.part")
-    try:
-        with urllib.request.urlopen(url, timeout=30) as response, part_path.open("wb") as fh:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                fh.write(chunk)
-        os.replace(part_path, dest)
-    except BaseException:
-        part_path.unlink(missing_ok=True)
-        raise
-
-
-def _ensure_model_files(voice_id: str) -> Path:
-    """Download the ONNX model and its JSON config if missing. Returns the
-    local model path."""
-    if voice_id not in RUSSIAN_VOICES:
-        raise ValueError(f"Unknown Piper voice: {voice_id}")
-
-    hf_path = RUSSIAN_VOICES[voice_id][2]
-    models_dir = _models_dir()
-    model_path = models_dir / f"{voice_id}.onnx"
-    config_path = models_dir / f"{voice_id}.onnx.json"
-
-    models_dir.mkdir(parents=True, exist_ok=True)
-    for url_suffix, local_path in (
-        (f"{hf_path}.onnx", model_path),
-        (f"{hf_path}.onnx.json", config_path),
-    ):
-        if local_path.exists():
-            continue
-        url = f"{HF_VOICES_BASE}/{url_suffix}"
-        logger.info("Downloading Piper voice %s from %s", voice_id, url)
-        _download_file(url, local_path)
-
-    return model_path
-
-
 def _load_voice(voice_id: str):
-    # /stream synthesizes in background threads; serialize per-voice so
-    # concurrent requests cannot race on the download or the cache dict.
+    paths = local_voice_paths(voice_id)
+    # /stream synthesizes in background threads; serialize per-voice loading.
     with _lock_for(voice_id):
         if voice_id in _voices:
             return _voices[voice_id]
@@ -136,10 +73,10 @@ def _load_voice(voice_id: str):
             logger.warning("piper-tts package not installed — run: pip install piper-tts")
             raise
 
-        model_path = _ensure_model_files(voice_id)
         voice = PiperVoice.load(
-            model_path,
-            download_dir=model_path.parent,
+            paths["piper-dmitri-onnx"],
+            config_path=paths["piper-dmitri-config"],
+            download_dir=paths["piper-dmitri-onnx"].parent,
             espeak_data_dir=_espeak_data_dir(),
         )
         _voices[voice_id] = voice
@@ -152,14 +89,10 @@ class PiperProvider(TTSProvider):
     model_name = "piper-voices"
 
     def owns_voice(self, voice: str) -> bool:
-        return voice.startswith("ru_")
+        return voice in RUSSIAN_VOICES
 
     def is_ready(self) -> bool:
-        try:
-            import piper  # noqa: F401
-            return True
-        except (Exception, SystemExit):
-            return False
+        return importlib.util.find_spec("piper") is not None and has_local_voice(self.name)
 
     def list_voices(self) -> list[dict]:
         return [
@@ -170,7 +103,7 @@ class PiperProvider(TTSProvider):
                 "gender": gender,
                 "sample_rate": 22050,
             }
-            for voice_id, (label, gender, _path) in RUSSIAN_VOICES.items()
+            for voice_id, (label, gender) in RUSSIAN_VOICES.items()
         ]
 
     def synthesize(
