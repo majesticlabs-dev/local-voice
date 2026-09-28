@@ -10,8 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-START = "# local-voice integration BEGIN (managed by local-voice-integration)"
-END = "# local-voice integration END"
+MARKER = "local-voice integration BEGIN (managed by local-voice-integration)"
 MASKS = {"SHIFT": 1, "CTRL": 4, "ALT": 8, "SUPER": 64}
 
 
@@ -51,10 +50,10 @@ def safe_file(path):
         raise ValueError(f"Refusing symlink: {path}")
 
 
-def owned_block(text):
-    if text.count(START) != 1 or text.count(END) != 1:
+def owned_block(text, start_marker, end_marker):
+    if text.count(start_marker) != 1 or text.count(end_marker) != 1:
         raise ValueError("Owned bindings changed or markers missing. Resolve manually.")
-    match = re.search(r"(?m)^" + re.escape(START) + r"\n.*?^" + re.escape(END) + r"\n?", text, re.S)
+    match = re.search(r"(?m)^" + re.escape(start_marker) + r"\n.*?^" + re.escape(end_marker) + r"\n?", text, re.S)
     if match is None:
         raise ValueError("Owned bindings changed or markers misplaced. Resolve manually.")
     return match
@@ -71,6 +70,25 @@ def effective_bindings():
         raise ValueError(f"Cannot inspect effective Hyprland bindings: {exc}") from exc
 
 
+def target_file(home, recorded=None):
+    hypr = home / ".config/hypr"
+    provider = recorded or ("lua" if (hypr / "hyprland.lua").exists() else "conf")
+    if provider not in ("lua", "conf"):
+        raise ValueError("Unknown recorded Hyprland provider. No files changed.")
+    config = hypr / f"hyprland.{provider}"
+    bindings = hypr / f"bindings.{provider}"
+    safe_file(config)
+    safe_file(bindings)
+    if not config.is_file() or (provider == "lua" and not bindings.is_file()):
+        raise ValueError(f"No usable {provider} Hyprland configuration at {config} / {bindings}. No files changed.")
+    return provider, bindings
+
+
+def markers(provider):
+    comment = "--" if provider == "lua" else "#"
+    return f"{comment} {MARKER}", f"{comment} local-voice integration END"
+
+
 def run(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["setup", "remove"])
@@ -80,23 +98,23 @@ def run(argv=None):
     parser.add_argument("--apply", action="store_true", help="Apply the displayed changes")
     args = parser.parse_args(argv)
     home = Path.home()
-    bindings = home / ".config/hypr/bindings.conf"
     state = home / ".config/local-voice/omarchy-integration.json"
-    safe_file(bindings)
     safe_file(state)
-    existed = bindings.exists()
-    original = bindings.read_text() if existed else ""
     record_text = state.read_text() if state.exists() else None
     record = json.loads(record_text) if record_text is not None else None
     if record is not None and (not isinstance(record, dict) or record.get("version") != 1):
         raise ValueError("Unknown integration record. No files changed.")
+    provider, bindings = target_file(home, record.get("provider", "conf") if record else None)
+    start_marker, end_marker = markers(provider)
+    existed = bindings.exists()
+    original = bindings.read_text() if existed else ""
 
     if args.action == "remove":
         if not record:
             print("No managed integration to remove.")
             return
         block = record.get("block")
-        match = owned_block(original)
+        match = owned_block(original, start_marker, end_marker)
         if match.group() != block:
             raise ValueError("Owned bindings changed. No files changed.")
         start = match.start()
@@ -120,14 +138,14 @@ def run(argv=None):
         return
 
     if record:
-        match = owned_block(original)
+        match = owned_block(original, start_marker, end_marker)
         if match.group() != record.get("block"):
             raise ValueError("Owned bindings changed. No files changed.")
         if args.read or args.stop or args.selection:
             raise ValueError("Already installed. Remove before choosing new shortcuts.")
         print("Shortcuts already installed, no changes.")
         return
-    if START in original or END in original:
+    if start_marker in original or end_marker in original:
         raise ValueError("Untracked Local Voice markers. No files changed.")
     if not args.read or not args.stop:
         raise ValueError("Choose both --read and --stop. No default global shortcuts are assigned.")
@@ -146,11 +164,17 @@ def run(argv=None):
     if collisions:
         raise ValueError("Effective binding conflicts:\n" + "\n".join(collisions) + "\nChoose different shortcuts.")
     # No shell interpolation of clipboard text. Only fixed executable commands go into the config.
-    block = (f"{START}\n"
-             f"bindd = {read[2]}, {read[1]}, Local Voice read clipboard, exec, local-voice-controller read-clipboard\n"
-             f"bindd = {stop[2]}, {stop[1]}, Local Voice stop, exec, local-voice-controller stop\n"
-             + (f"bindd = {selection[2]}, {selection[1]}, Local Voice toggle selection, exec, local-voice-controller toggle-selection\n" if selection else "")
-             + f"{END}\n")
+    actions = [(read, "Local Voice read clipboard", "local-voice-controller read-clipboard"),
+               (stop, "Local Voice stop", "local-voice-controller stop")]
+    if selection:
+        actions.append((selection, "Local Voice toggle selection", "local-voice-controller toggle-selection"))
+    if provider == "lua":
+        lines = [f"o.bind({json.dumps(' + '.join((*mods.split(), key)))}, {json.dumps(description)}, {json.dumps(command)})"
+                 for (_, key, mods), description, command in actions]
+    else:
+        lines = [f"bindd = {mods}, {key}, {description}, exec, {command}"
+                 for (_, key, mods), description, command in actions]
+    block = f"{start_marker}\n" + "\n".join(lines) + f"\n{end_marker}\n"
     prefix = "" if not original or original.endswith("\n") else "\n"
     print(f"Append to {bindings}:\n{prefix}{block}")
     print(f"Create ownership record: {state} (exact managed block)")
@@ -163,7 +187,7 @@ def run(argv=None):
             raise ValueError("Ownership record appeared during setup. No files changed.")
         atomic_write(bindings, original + prefix + block, bindings.stat().st_mode & 0o777 if bindings.exists() else 0o644)
         try:
-            atomic_write(state, json.dumps({"version": 1, "block": block, "prefix": prefix}, indent=2) + "\n", 0o600)
+            atomic_write(state, json.dumps({"version": 1, "provider": provider, "block": block, "prefix": prefix}, indent=2) + "\n", 0o600)
         except Exception:
             if existed:
                 atomic_write(bindings, original, bindings.stat().st_mode & 0o777)
