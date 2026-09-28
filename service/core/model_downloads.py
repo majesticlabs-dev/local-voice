@@ -37,8 +37,7 @@ _active: str | None = None
 
 def source_url(asset: catalog.Asset) -> str:
     if asset.id == "spacy-en-core-web-sm":
-        return ("https://github.com/explosion/spacy-models/releases/download/"
-                f"{asset.revision}/{asset.upstream_path}")
+        return asset.source
     return f"{asset.source}/resolve/{asset.revision}/{asset.upstream_path}"
 
 

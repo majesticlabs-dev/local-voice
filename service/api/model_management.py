@@ -48,6 +48,8 @@ class MigrationRequest(BaseModel):
 @router.on_event("startup")
 def start_management():
     model_lifecycle.startup()
+    from ..core import spacy_model
+    spacy_model.activate()
 
 
 @router.on_event("shutdown")

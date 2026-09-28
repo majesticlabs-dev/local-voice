@@ -93,8 +93,9 @@ def _load_kokoro(lang_code: str = DEFAULT_LANG_CODE):
         # Misaki's English constructor calls spacy.cli.download when its
         # package is missing. Never enter that constructor in that state.
         if lang_code in ("a", "b"):
+            from ..core import spacy_model
             import spacy.util
-            if not spacy.util.is_package("en_core_web_sm"):
+            if not spacy_model.activate() or not spacy.util.is_package("en_core_web_sm"):
                 raise SetupNeeded("en", ["spacy-en-core-web-sm"])
         from kokoro import KModel
         root = config.models_dir / "kokoro"
