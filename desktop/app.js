@@ -1003,7 +1003,14 @@ async function init() {
   try {
     await loadDesktopSettings();
     await loadServiceState();
-    if (settings.serverMode && !state.serviceInfo?.serverMode) {
+    if (state.serviceInfo?.sharedService) {
+      els.serverMode.checked = false;
+      els.serverMode.disabled = true;
+      els.serverMode.title = 'The shared Linux service is loopback-only. LAN server mode is unavailable.';
+      els.ffmpegPath.disabled = true;
+      els.ffmpegPath.title = 'Set LV_FFMPEG_PATH in the systemd user-service override and restart the unit.';
+    }
+    if (!state.serviceInfo?.sharedService && settings.serverMode && !state.serviceInfo?.serverMode) {
       state.serviceInfo = await invoke('toggle_server_mode', { enable: true });
     }
   } catch (error) {
