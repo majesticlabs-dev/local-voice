@@ -205,10 +205,15 @@ function applyHealthState(health) {
 
   state.startupErrorTitle = 'Startup issue';
   state.startupError = '';
-  state.healthPhase = health?.ready ? 'ready' : 'starting';
-  state.healthText = health?.ready
-    ? `Service ready (${health.engine})`
-    : `Service warming up (${health.engine})`;
+  if (health?.status === 'setup_needed') {
+    state.healthPhase = 'setup_needed';
+    state.healthText = 'Choose models to download';
+  } else {
+    state.healthPhase = health?.ready ? 'ready' : 'starting';
+    state.healthText = health?.ready
+      ? `Service ready (${health.engine})`
+      : `Service warming up (${health.engine})`;
+  }
 }
 
 async function maybeNotifyStartupIssue() {

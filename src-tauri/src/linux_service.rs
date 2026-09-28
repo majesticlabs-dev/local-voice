@@ -106,6 +106,8 @@ fn management_route(action: &str, job_id: Option<&str>) -> Result<(&'static str,
         ("catalog", true) => Ok(("GET", "/models".into())),
         ("download", true) => Ok(("POST", "/models/downloads".into())),
         ("remove", true) => Ok(("POST", "/models/removals".into())),
+        ("migration", true) => Ok(("GET", "/models/migration".into())),
+        ("migrate", true) => Ok(("POST", "/models/migration".into())),
         ("job", false) => Ok(("GET", format!("/models/downloads/{id}"))),
         ("cancel", false) => Ok(("POST", format!("/models/downloads/{id}/cancel"))),
         _ => Err("Invalid model management action".into()),
@@ -117,6 +119,7 @@ pub(super) fn manage_models(
     action: &str,
     job_id: Option<&str>,
     languages: Option<Vec<String>>,
+    candidates: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     let (method, route) = management_route(action, job_id)?;
     let path = app
@@ -151,6 +154,16 @@ pub(super) fn manage_models(
             return Err("Invalid language selection".into());
         }
         request.json(&serde_json::json!({"languages": ids}))
+    } else if action == "migrate" {
+        let ids = candidates.ok_or("Migration candidates required")?;
+        if ids.is_empty()
+            || ids
+                .iter()
+                .any(|id| id.len() != 24 || !id.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err("Invalid migration candidate selection".into());
+        }
+        request.json(&serde_json::json!({"candidates": ids}))
     } else {
         request
     };
@@ -174,7 +187,23 @@ mod tests {
 
     #[test]
     fn management_routes_are_bounded() {
-        assert_eq!(management_route("catalog", None).unwrap().1, "/models");
+        let cases = [
+            ("catalog", None, "GET", "/models"),
+            ("download", None, "POST", "/models/downloads"),
+            ("remove", None, "POST", "/models/removals"),
+            ("migration", None, "GET", "/models/migration"),
+            ("migrate", None, "POST", "/models/migration"),
+            ("job", Some("abc123"), "GET", "/models/downloads/abc123"),
+            (
+                "cancel",
+                Some("abc123"),
+                "POST",
+                "/models/downloads/abc123/cancel",
+            ),
+        ];
+        for (action, id, method, path) in cases {
+            assert_eq!(management_route(action, id).unwrap(), (method, path.into()));
+        }
         assert!(management_route("job", Some("../health")).is_err());
         assert!(management_route("download", Some("abc")).is_err());
     }

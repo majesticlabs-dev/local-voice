@@ -242,12 +242,13 @@ fn manage_models(
     action: String,
     job_id: Option<String>,
     languages: Option<Vec<String>>,
+    candidates: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "linux")]
-    return linux_service::manage_models(&app, &action, job_id.as_deref(), languages);
+    return linux_service::manage_models(&app, &action, job_id.as_deref(), languages, candidates);
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (app, action, job_id, languages);
+        let _ = (app, action, job_id, languages, candidates);
         Err("Model management is not configured for this platform.".into())
     }
 }
