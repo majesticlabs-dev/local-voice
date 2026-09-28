@@ -1,4 +1,5 @@
 import { stripMarkdown } from './markdown.js';
+import { createModelManager } from './model-manager.js';
 
 const SETTINGS_KEY = 'local-voice-desktop-settings';
 const DEFAULT_SETTINGS = {
@@ -25,6 +26,7 @@ const state = {
   ffmpegPath: '',
   healthPhase: 'starting',
   healthReady: false,
+  healthSetupNeeded: false,
   healthText: 'Starting service…',
   settingsOpen: false,
   startupError: '',
@@ -41,6 +43,7 @@ const state = {
   cancelPlayback: null,
   lastSpeak: null,
   voicesLoaded: false,
+  modelCatalog: null,
   track: null,
   estimatedDuration: 0,
 };
@@ -80,6 +83,9 @@ const els = {
   timeText: document.querySelector('#time-text'),
   uploadTrigger: document.querySelector('#upload-trigger'),
   voiceSelect: document.querySelector('#voice-select'),
+  modelsButton: document.querySelector('#models-button'),
+  modelsClose: document.querySelector('#models-close'),
+  modelsOverlay: document.querySelector('#models-overlay'),
   forwardButton: document.querySelector('#forward-button'),
 };
 
@@ -192,7 +198,15 @@ function applyHealthState(health) {
   const dependencies = Array.isArray(health?.dependencies) ? health.dependencies : [];
   const blocking = blockingDependencies(dependencies);
 
-  state.healthReady = Boolean(health?.ready) && blocking.length === 0;
+  state.healthSetupNeeded = health?.status === 'setup_needed' && !blocking.length;
+  state.healthReady = (Boolean(health?.ready) || state.healthSetupNeeded) && blocking.length === 0;
+
+  if (state.healthSetupNeeded) {
+    state.healthPhase = 'ready';
+    state.healthText = 'Service running, model setup needed';
+    state.startupError = '';
+    return;
+  }
 
   if (blocking.length) {
     const missingBinary = blocking.some((dependency) => dependency.name === 'ffmpeg');
@@ -291,11 +305,13 @@ function render() {
 
   const hasText = currentPreparedText().length > 0;
   els.resetText.hidden = !hasText;
-  els.speakButton.disabled = !state.healthReady || !hasText || state.loading;
+  const voiceAvailable = !state.modelCatalog ? !state.healthSetupNeeded : state.modelCatalog.languages.some((language) =>
+    language.voices.some((voice) => voice.id === els.voiceSelect.value && voice.installed));
+  els.speakButton.disabled = !state.healthReady || !voiceAvailable || !hasText || state.loading;
   els.pauseButton.disabled = !(state.playing || state.paused);
   els.pauseButton.textContent = state.paused ? 'Resume' : 'Pause';
   els.stopButton.disabled = !(state.playing || state.paused || state.loading);
-  els.downloadButton.disabled = !hasText || state.loading;
+  els.downloadButton.disabled = !hasText || !voiceAvailable || state.loading;
   const hasTrack = Boolean(state.track?.items?.length);
   els.restartButton.disabled = !hasTrack || state.loading;
   els.backwardButton.disabled = !hasTrack || state.loading;
@@ -423,7 +439,7 @@ async function healthPoll() {
   try {
     const health = await fetchJson('/health');
     applyHealthState(health);
-    if (state.healthReady && !state.voicesLoaded) {
+    if (!state.voicesLoaded) {
       await loadVoices();
     }
   } catch (_) {
@@ -433,6 +449,7 @@ async function healthPoll() {
       }
     } catch (_) {}
     state.healthReady = false;
+    state.healthSetupNeeded = false;
     if (state.serviceInfo?.lastError) {
       state.healthPhase = 'error';
       state.healthText = 'Service failed';
@@ -486,12 +503,16 @@ async function loadVoices() {
   for (const voice of payload.voices) {
     const option = document.createElement('option');
     option.value = voice.id;
-    option.textContent = `${voice.label} (${voice.id})`;
+    const installed = state.modelCatalog?.languages.some((language) =>
+      language.voices.some((item) => item.id === voice.id && item.installed));
+    option.disabled = Boolean(state.modelCatalog) && !installed;
+    option.textContent = `${voice.label} (${voice.id})${state.modelCatalog && !installed ? ' (setup needed)' : ''}`;
     els.voiceSelect.append(option);
   }
-  els.voiceSelect.value = payload.voices.some((voice) => voice.id === selected)
+  const usable = [...els.voiceSelect.options].filter((option) => !option.disabled);
+  els.voiceSelect.value = usable.some((option) => option.value === selected)
     ? selected
-    : payload.voices[0]?.id ?? DEFAULT_SETTINGS.voice;
+    : usable[0]?.value ?? '';
   state.voicesLoaded = true;
   saveSettings();
 }
@@ -946,6 +967,36 @@ function bindFileDrop() {
   });
 }
 
+// T06 supplies this native command. Until then management stays unavailable.
+async function managementToken() {
+  if (!invoke) throw new Error('Native desktop authorization is unavailable.');
+  const token = await invoke('get_management_token');
+  if (!token) throw new Error('Management token is not configured.');
+  return token;
+}
+
+async function modelRequest(path, options = {}) {
+  const token = await managementToken();
+  const response = await fetch(`${apiBase()}${path}`, {
+    ...options,
+    headers: { 'X-Local-Voice-Management': token, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+  });
+  if (!response.ok) throw new Error(await responseErrorMessage(response));
+  return response.json();
+}
+
+const modelManager = createModelManager({
+  root: document.querySelector('#models-overlay'),
+  request: modelRequest,
+  confirm: confirmDialog,
+  storage: localStorage,
+  onCatalog(catalog) {
+    state.modelCatalog = catalog;
+    if (state.voicesLoaded) loadVoices().catch(() => {});
+    render();
+  },
+});
+
 async function init() {
   if (tauriApi.app?.getVersion) {
     tauriApi.app.getVersion().then((v) => {
@@ -974,6 +1025,14 @@ async function init() {
     syncRateLabel();
     saveSettings();
   });
+  els.modelsButton.addEventListener('click', () => {
+    els.modelsOverlay.hidden = false;
+    modelManager.refresh();
+  });
+  els.modelsClose.addEventListener('click', () => { els.modelsOverlay.hidden = true; });
+  els.modelsOverlay.addEventListener('click', (event) => {
+    if (event.target === els.modelsOverlay) els.modelsOverlay.hidden = true;
+  });
   els.settingsButton.addEventListener('click', openSettings);
   els.settingsClose.addEventListener('click', closeSettings);
   els.settingsOverlay.addEventListener('click', (event) => {
@@ -1000,9 +1059,8 @@ async function init() {
   });
   els.textInput.addEventListener('input', render);
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && state.settingsOpen) {
-      closeSettings();
-    }
+    if (event.key === 'Escape' && !els.modelsOverlay.hidden) els.modelsOverlay.hidden = true;
+    if (event.key === 'Escape' && state.settingsOpen) closeSettings();
   });
 
   try {
@@ -1023,10 +1081,12 @@ async function init() {
   }
 
   await healthPoll();
+  await modelManager.refresh();
   syncTimeLabel();
   setInterval(() => {
     healthPoll().catch(() => {});
   }, 3000);
+  setInterval(() => modelManager.poll(), 1000);
   render();
 }
 
