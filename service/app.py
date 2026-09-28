@@ -43,6 +43,9 @@ def _release_provider_caches(assets: set[str]) -> None:
     from .providers.piper import PiperProvider
     KokoroProvider().release_assets(assets)
     PiperProvider().release_assets(assets)
+    if "spacy-en-core-web-sm" in assets:
+        from .core import spacy_model
+        spacy_model.deactivate()
 
 
 model_lifecycle.register_release(_release_provider_caches)

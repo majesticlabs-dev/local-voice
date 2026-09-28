@@ -65,9 +65,6 @@ class ModelManagementTests(unittest.TestCase):
         headers = {"X-Local-Voice-Management": "test-secret"}
         self.assertEqual(self.client.post("/models/removals", json={"languages": ["ru"]}, headers=headers).status_code, 409)
         self.assertEqual(self.client.post("/models/downloads", json={"languages": ["other"]}, headers=headers).status_code, 422)
-        blocked = self.client.post("/models/downloads", json={"languages": ["en"]}, headers=headers)
-        self.assertEqual(blocked.status_code, 409)
-        self.assertIn("integrity metadata", blocked.json()["detail"])
         self.assertEqual(self.client.get("/models/downloads/job", headers=headers).status_code, 404)
         self.assertEqual(self.client.post("/models/downloads/job/cancel", headers=headers).status_code, 404)
         self.assertEqual(list(self.root.iterdir()), [])

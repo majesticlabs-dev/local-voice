@@ -11,7 +11,8 @@ from .config import config
 
 KOKORO_SOURCE = "https://huggingface.co/hexgrad/Kokoro-82M"
 PIPER_SOURCE = "https://huggingface.co/rhasspy/piper-voices"
-SPACY_SOURCE = "https://github.com/explosion/spacy-models/releases/tag/en_core_web_sm-3.8.0"
+SPACY_SOURCE = ("https://github.com/explosion/spacy-models/releases/download/"
+                "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl")
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ VOICE_DIGESTS = {
 _ASSETS = (
     Asset("kokoro-config", "kokoro/config.json", 2351, KOKORO_SOURCE, KOKORO_REVISION, "Apache-2.0", "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f", "config.json"),
     Asset("kokoro-weights", "kokoro/kokoro-v1_0.pth", 327212226, KOKORO_SOURCE, KOKORO_REVISION, "Apache-2.0", "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4", "kokoro-v1_0.pth"),
-    Asset("spacy-en-core-web-sm", "spacy/en_core_web_sm-3.8.0-py3-none-any.whl", 12806118, SPACY_SOURCE, "en_core_web_sm-3.8.0", None, None, "en_core_web_sm-3.8.0-py3-none-any.whl"),
+    Asset("spacy-en-core-web-sm", "spacy/en_core_web_sm-3.8.0-py3-none-any.whl", 12806118, SPACY_SOURCE, "en_core_web_sm-3.8.0", None, "1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85", "en_core_web_sm-3.8.0-py3-none-any.whl"),
     *(
         Asset(f"kokoro-{voice}", f"kokoro/voices/{voice}.pt", size, KOKORO_SOURCE, KOKORO_REVISION, "Apache-2.0", VOICE_DIGESTS[voice], f"voices/{voice}.pt")
         for voice, size in (
