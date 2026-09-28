@@ -100,6 +100,20 @@ class IntegrationTests(unittest.TestCase):
         self.assertFalse(self.record.exists())
         self.assertNotIn("Local Voice", self.bindings.read_text())
 
+    def test_mixed_case_key_conflicts_with_existing_uppercase_binding(self):
+        self.fixture.write_text(json.dumps([{"modmask": 64, "key": "DELETE", "submap": "", "description": "Existing delete"}]))
+        result = self.command("setup", "--read", "SUPER + Delete", "--stop", "SUPER + Home", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Existing delete", result.stderr)
+        self.assertFalse(self.record.exists())
+        self.assertNotIn("Local Voice", self.bindings.read_text())
+
+    def test_read_and_stop_keys_conflict_even_when_case_differs(self):
+        result = self.command("setup", "--read", "SUPER + Delete", "--stop", "SUPER + DELETE", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("same shortcut", result.stderr)
+        self.assertFalse(self.record.exists())
+
     def test_file_without_final_newline_round_trips(self):
         original = "# unrelated without newline"
         self.bindings.write_text(original)

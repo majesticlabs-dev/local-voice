@@ -132,13 +132,13 @@ def run(argv=None):
         raise ValueError("Choose both --read and --stop. No default global shortcuts are assigned.")
     read = shortcut(args.read)
     stop = shortcut(args.stop)
-    if read[:2] == stop[:2]:
+    if read[0] == stop[0] and read[1].casefold() == stop[1].casefold():
         raise ValueError("Read and stop use the same shortcut.")
     collisions = []
     binds = effective_bindings()
     for mask, key, _ in (read, stop):
         for bind in binds:
-            if bind.get("modmask") == mask and str(bind.get("key", "")) == key and bind.get("submap", "") == "":
+            if bind.get("modmask") == mask and str(bind.get("key", "")).casefold() == key.casefold() and bind.get("submap", "") == "":
                 collisions.append(f"{mask}+{key}: {bind.get('description') or bind.get('dispatcher')}")
     if collisions:
         raise ValueError("Effective binding conflicts:\n" + "\n".join(collisions) + "\nChoose different shortcuts.")
