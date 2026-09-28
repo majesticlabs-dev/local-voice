@@ -7,7 +7,7 @@ from .core.config import config
 from .core.dependencies import ProviderStatus, runtime_dependencies
 from .providers.base import TTSProvider
 from .providers.kokoro import KokoroProvider
-from .api import export, health, preprocess, stop, stream, synthesize, voices
+from .api import export, health, model_management, preprocess, stop, stream, synthesize, voices
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +75,7 @@ def _build_provider() -> TTSProvider:
 
 
 # Routes
+app.include_router(model_management.router)
 app.include_router(health.router)
 app.include_router(voices.router)
 app.include_router(synthesize.router)
