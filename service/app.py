@@ -74,6 +74,8 @@ def get_provider_statuses() -> list[ProviderStatus]:
     for child in children:
         status = ProviderStatus(name=child.name, model_name=child.model_name)
         try:
+            from .core.setup import has_local_voice
+            status.installed = has_local_voice(child.name)
             status.ready = child.is_ready()
         except (Exception, SystemExit) as exc:
             status.error = exc

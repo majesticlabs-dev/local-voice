@@ -64,7 +64,7 @@ class DependencyStatusTests(unittest.TestCase):
         ):
             checks = dependencies.runtime_dependencies(
                 provider_statuses=[
-                    dependencies.ProviderStatus(name="kokoro", model_name="kokoro-82m", ready=True),
+                    dependencies.ProviderStatus(name="kokoro", model_name="kokoro-82m", ready=True, installed=True),
                 ],
             )
 
@@ -81,7 +81,7 @@ class DependencyStatusTests(unittest.TestCase):
         ):
             checks = dependencies.runtime_dependencies(
                 provider_statuses=[
-                    dependencies.ProviderStatus(name="kokoro", model_name="kokoro-82m", ready=True),
+                    dependencies.ProviderStatus(name="kokoro", model_name="kokoro-82m", ready=True, installed=True),
                     dependencies.ProviderStatus(
                         name="piper", model_name="piper-voices", error=RuntimeError("boom")
                     ),
@@ -94,6 +94,7 @@ class DependencyStatusTests(unittest.TestCase):
         )
         self.assertTrue(checks[0]["available"])
         self.assertFalse(checks[1]["available"])
+        self.assertFalse(checks[1]["required"])
         self.assertFalse(checks[2]["available"])
 
 

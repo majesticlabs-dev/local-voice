@@ -1,4 +1,5 @@
 import json
+import io
 import os
 from pathlib import Path
 import socket
@@ -11,6 +12,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
+from service import clipboard_controller
 from service.clipboard_controller import Controller
 
 
@@ -153,6 +155,53 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("Shared service unavailable", controller.status()["error"])
         self.assertNotIn("Private phrase", json.dumps(controller.status()))
         self.assertFalse(self.played.exists())
+
+    def test_quit_closes_only_matching_desktop_and_stops_service(self):
+        marker = Path(self.tmp.name) / "local-voice/off"
+        marker.parent.mkdir(exist_ok=True)
+        clients = [
+            {"class": "dev.majesticlabs.localvoice", "title": "Local Voice Desktop · Majestic Labs", "address": "0xabc"},
+            {"class": "other", "title": "Local Voice Desktop · Majestic Labs", "address": "0xdef"},
+        ]
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["hyprctl", "clients", "-j"]:
+                return subprocess.CompletedProcess(args, 0, json.dumps(clients), "")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        with patch.object(clipboard_controller, "send", side_effect=lambda path, command: calls.append([command])), \
+             patch.object(clipboard_controller.subprocess, "run", side_effect=run):
+            self.assertEqual(clipboard_controller.quit_local_voice(marker.parent / "controller.sock", marker)["state"], "off")
+            self.assertEqual(clipboard_controller.start_local_voice(marker)["state"], "idle")
+        self.assertEqual(calls, [["stop"], ["hyprctl", "clients", "-j"],
+                                 ["hyprctl", "dispatch", "closewindow", "address:0xabc"],
+                                 ["systemctl", "--user", "stop", "local-voice.service"],
+                                 ["systemctl", "--user", "start", "local-voice.service"]])
+        self.assertFalse(marker.exists())
+
+    def test_quit_failure_does_not_mark_off_or_stop_service(self):
+        marker = Path(self.tmp.name) / "local-voice/off"
+        marker.parent.mkdir(exist_ok=True)
+        with patch.object(clipboard_controller, "send"), \
+             patch.object(clipboard_controller.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "hyprctl")) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                clipboard_controller.quit_local_voice(marker.parent / "controller.sock", marker)
+        self.assertEqual(run.call_count, 1)
+        self.assertFalse(marker.exists())
+
+    def test_status_reports_off_marker_and_start_failure_preserves_it(self):
+        directory = clipboard_controller.runtime_dir()
+        marker = directory / "off"
+        marker.touch()
+        with patch.object(sys, "argv", ["controller", "status"]), \
+             patch.object(clipboard_controller, "send", return_value={"state": "idle", "error": None}), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(clipboard_controller.main(), 0)
+            self.assertEqual(json.loads(output.getvalue())["state"], "off")
+        with patch.object(clipboard_controller, "service_action", side_effect=RuntimeError("start failed")):
+            with self.assertRaises(RuntimeError):
+                clipboard_controller.start_local_voice(marker)
+        self.assertTrue(marker.exists())
 
     def test_bad_socket_clients_do_not_stop_daemon(self):
         root = Path(self.tmp.name)

@@ -1,12 +1,13 @@
 """Explicit Wayland clipboard playback, separate from desktop and browser sessions.
 
-CLI: python -m service.clipboard_controller {read-clipboard|stop|status}
+CLI: python -m service.clipboard_controller {read-clipboard|stop|status|quit|start}
 The first read starts a per-user controller process. Status and stop never start it.
 """
 import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -156,6 +157,50 @@ class Controller:
             self._set(generation, "error", "Clipboard or playback failed")
 
 
+def desktop_windows():
+    result = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True,
+                            check=True, timeout=5)
+    clients = json.loads(result.stdout)
+    if not isinstance(clients, list):
+        raise ValueError("Cannot inspect desktop windows")
+    addresses = []
+    for client in clients:
+        if not isinstance(client, dict):
+            raise ValueError("Invalid desktop window list")
+        if (client.get("class") in ("dev.majesticlabs.localvoice", "local-voice-desktop")
+                and str(client.get("title", "")).startswith("Local Voice Desktop")):
+            address = str(client.get("address", ""))
+            if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
+                raise ValueError("Invalid desktop window address")
+            addresses.append(address)
+    return addresses
+
+
+def service_action(action):
+    subprocess.run(["systemctl", "--user", action, "local-voice.service"],
+                   capture_output=True, text=True, check=True, timeout=15)
+
+
+def quit_local_voice(path, marker):
+    try:
+        send(path, "stop")
+    except (OSError, ValueError):
+        pass  # No controller session to stop.
+    for address in desktop_windows():
+        # Hyprland sends a normal window close request. Tauri handles CloseRequested.
+        subprocess.run(["hyprctl", "dispatch", "closewindow", "address:" + address],
+                       capture_output=True, text=True, check=True, timeout=5)
+    service_action("stop")
+    marker.touch(mode=0o600)
+    return {"state": "off", "error": None}
+
+
+def start_local_voice(marker):
+    service_action("start")
+    marker.unlink(missing_ok=True)
+    return {"state": "idle", "error": None}
+
+
 def send(path, command):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(2)
@@ -202,11 +247,20 @@ def serve(path):
 
 def main():
     reads = ("read-clipboard", "read-selection", "toggle-selection")
-    if len(sys.argv) != 2 or sys.argv[1] not in (*reads, "stop", "status", "serve"):
-        print("Usage: controller {read-clipboard|read-selection|toggle-selection|stop|status}", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in (*reads, "stop", "status", "quit", "start", "serve"):
+        print("Usage: controller {read-clipboard|read-selection|toggle-selection|stop|status|quit|start}", file=sys.stderr)
         return 2
     command = sys.argv[1]
-    path = runtime_dir() / "controller.sock"
+    directory = runtime_dir()
+    path = directory / "controller.sock"
+    marker = directory / "off"
+    if command in ("quit", "start"):
+        try:
+            result = quit_local_voice(path, marker) if command == "quit" else start_local_voice(marker)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            result = {"state": "error", "error": f"Local Voice {command} failed: {exc}"}
+        print(json.dumps(result))
+        return 1 if result["state"] == "error" else 0
     if command == "serve":
         serve(path)
         return 0
@@ -228,6 +282,8 @@ def main():
                     continue
             else:
                 result = {"state": "error", "error": "Controller could not start"}
+    if command == "status" and marker.exists():
+        result = {"state": "off", "error": None}
     print(json.dumps(result))
     return 1 if result["state"] == "error" else 0
 

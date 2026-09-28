@@ -10,14 +10,39 @@ BarWidget {
 
   property var playback: ({ state: "offline", error: "" })
   property string backend: "down"
+  property bool opened: false
+  property bool popoutSwitchClosing: false
   readonly property string statusLabel: Status.label(playback, backend)
 
-  implicitWidth: controls.implicitWidth
-  implicitHeight: barSize
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  function open() { opened = true }
+  function close() { opened = false }
+  function toggle() { opened ? close() : open() }
+  function closeForPopoutSwitch() {
+    popoutSwitchClosing = true
+    close()
+    Qt.callLater(function() { popoutSwitchClosing = false })
+  }
 
   function refresh() {
     if (!statusProcess.running) statusProcess.running = true
     if (!healthProcess.running) healthProcess.running = true
+  }
+
+  function read() { if (!readProcess.running) readProcess.running = true }
+  function select() { if (!selectionProcess.running) selectionProcess.running = true }
+  function stop() { if (!stopProcess.running) stopProcess.running = true }
+  function launch() { if (!appProcess.running) appProcess.running = true }
+  function choose(action) {
+    close()
+    if (action === "stop") stop()
+    else if (action === "read") read()
+    else if (action === "selection") select()
+    else if (action === "app") launch()
+    else if (action === "quit" && !quitProcess.running) quitProcess.running = true
+    else if (action === "start" && !startProcess.running) startProcess.running = true
   }
 
   Process {
@@ -57,6 +82,18 @@ BarWidget {
     command: ["local-voice"]
   }
 
+  Process {
+    id: quitProcess
+    command: ["local-voice-controller", "quit"]
+    onExited: root.refresh()
+  }
+
+  Process {
+    id: startProcess
+    command: ["local-voice-controller", "start"]
+    onExited: root.refresh()
+  }
+
   Timer {
     interval: 3000
     running: true
@@ -65,44 +102,76 @@ BarWidget {
     onTriggered: root.refresh()
   }
 
-  Row {
-    id: controls
-    anchors.centerIn: parent
-    spacing: Style.space(2)
-
-    WidgetButton {
-      bar: root.bar
-      text: root.statusLabel
-      interactive: false
-      dimmed: root.backend !== "ready"
+  BarIconButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    text: Status.icon(root.playback, root.backend)
+    active: Status.active(root.playback, root.backend)
+    dimmed: root.backend === "down" || root.statusLabel === "Setup needed"
+    tooltipText: "Local Voice: " + root.statusLabel
+    onPressed: function(b) {
+      if (b === Qt.RightButton) root.toggle()
+      else if (b === Qt.LeftButton) root.choose(Status.primaryAction(root.playback, root.backend))
     }
+  }
 
-    WidgetButton {
-      bar: root.bar
-      text: "Read clipboard"
-      tooltipText: "Speak clipboard text (explicit action)"
-      onPressed: if (!readProcess.running) readProcess.running = true
-    }
+  KeyboardPanel {
+    id: menu
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    contentWidth: menu.fittedContentWidth(Style.space(240))
+    contentHeight: menu.fittedContentHeight(menuItems.implicitHeight)
+    focusTarget: keyCatcher
 
-    WidgetButton {
-      bar: root.bar
-      text: "Read selection"
-      tooltipText: "Speak primary selection, or stop current playback"
-      onPressed: if (!selectionProcess.running) selectionProcess.running = true
-    }
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
 
-    WidgetButton {
-      bar: root.bar
-      text: "Stop"
-      tooltipText: "Stop panel and shortcut playback only"
-      onPressed: if (!stopProcess.running) stopProcess.running = true
-    }
+      Column {
+        id: menuItems
+        width: parent.width
+        spacing: Style.space(2)
 
-    WidgetButton {
-      bar: root.bar
-      text: root.statusLabel === "Setup needed" ? "Set up" : "App"
-      tooltipText: root.statusLabel === "Setup needed" ? "Open Local Voice, then select Models" : "Open Local Voice"
-      onPressed: if (!appProcess.running) appProcess.running = true
+        Button {
+          width: parent.width
+          text: "Read clipboard"
+          leftAlign: true
+          focusable: true
+          onClicked: root.choose("read")
+        }
+        Button {
+          width: parent.width
+          text: "Read selection"
+          leftAlign: true
+          focusable: true
+          onClicked: root.choose("selection")
+        }
+        Button {
+          width: parent.width
+          text: "Stop"
+          leftAlign: true
+          focusable: true
+          onClicked: root.choose("stop")
+        }
+        Button {
+          width: parent.width
+          text: Status.appLabel(root.playback, root.backend)
+          leftAlign: true
+          focusable: true
+          onClicked: root.choose("app")
+        }
+        Button {
+          width: parent.width
+          text: Status.powerLabel(root.playback, root.backend)
+          leftAlign: true
+          focusable: true
+          onClicked: root.choose(Status.powerAction(root.playback, root.backend))
+        }
+      }
     }
   }
 }

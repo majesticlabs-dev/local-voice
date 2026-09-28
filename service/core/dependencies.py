@@ -10,6 +10,7 @@ class ProviderStatus:
     name: str
     model_name: str = ""
     ready: bool = False
+    installed: bool = False
     # BaseException: engine deps may raise SystemExit (e.g. spaCy model
     # resolution); that is reported as "not ready", not a crash.
     error: BaseException | None = None
@@ -79,6 +80,7 @@ def provider_dependency_status(
     provider_name: str,
     model_name: str,
     ready: bool,
+    installed: bool = False,
     error: BaseException | None = None,
 ) -> dict[str, object]:
     if error is not None:
@@ -93,7 +95,7 @@ def provider_dependency_status(
     return {
         "name": provider_name,
         "available": error is None and ready,
-        "required": True,
+        "required": installed,
         "detail": detail,
         "location": None,
     }
@@ -140,6 +142,7 @@ def runtime_dependencies(
             provider_name=status.name,
             model_name=status.model_name,
             ready=status.ready,
+            installed=status.installed,
             error=status.error,
         )
         for status in provider_statuses
