@@ -8,6 +8,7 @@ from .core.config import config
 from .core.dependencies import ProviderStatus, runtime_dependencies
 from .providers.base import TTSProvider
 from .core.setup import SetupNeeded
+from .core import model_lifecycle
 from .providers.kokoro import KokoroProvider
 from .api import export, health, model_management, preprocess, stop, stream, synthesize, voices
 
@@ -36,6 +37,15 @@ app.add_middleware(
 
 # Provider registry
 _provider: TTSProvider | None = None
+
+
+def _release_provider_caches(assets: set[str]) -> None:
+    from .providers.piper import PiperProvider
+    KokoroProvider().release_assets(assets)
+    PiperProvider().release_assets(assets)
+
+
+model_lifecycle.register_release(_release_provider_caches)
 
 
 def get_provider() -> TTSProvider:

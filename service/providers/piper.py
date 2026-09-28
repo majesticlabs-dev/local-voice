@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .base import TTSProvider
 from ..core.audio import wav_from_pcm, convert_to_mp3
-from ..core.setup import local_voice_paths, has_local_voice
+from ..core.setup import local_voice_paths, has_local_voice, voice_asset_ids
+from ..core import model_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -109,32 +110,39 @@ class PiperProvider(TTSProvider):
     def synthesize(
         self, text: str, voice: str, rate: float, audio_format: str
     ) -> bytes:
-        from piper import SynthesisConfig
+        with model_lifecycle.using(set(voice_asset_ids(voice))):
+            from piper import SynthesisConfig
 
-        piper_voice = _load_voice(voice)
+            piper_voice = _load_voice(voice)
 
-        # Piper speeds up when length_scale shrinks; invert the rate.
-        voice_cfg = piper_voice.config
-        syn_config = SynthesisConfig(
-            length_scale=(getattr(voice_cfg, "length_scale", None) or 1.0) / rate
-        )
-        for attr in ("noise_scale", "noise_w_scale"):
-            value = getattr(voice_cfg, attr, None)
-            if value is not None:
-                setattr(syn_config, attr, value)
+            # Piper speeds up when length_scale shrinks; invert the rate.
+            voice_cfg = piper_voice.config
+            syn_config = SynthesisConfig(
+                length_scale=(getattr(voice_cfg, "length_scale", None) or 1.0) / rate
+            )
+            for attr in ("noise_scale", "noise_w_scale"):
+                value = getattr(voice_cfg, attr, None)
+                if value is not None:
+                    setattr(syn_config, attr, value)
 
-        pcm_bytes = b"".join(
-            chunk.audio_int16_bytes
-            for chunk in piper_voice.synthesize(text, syn_config)
-        )
-        if not pcm_bytes:
-            raise RuntimeError("Piper produced no audio output")
+            pcm_bytes = b"".join(
+                chunk.audio_int16_bytes
+                for chunk in piper_voice.synthesize(text, syn_config)
+            )
+            if not pcm_bytes:
+                raise RuntimeError("Piper produced no audio output")
 
-        wav_data = wav_from_pcm(pcm_bytes, sample_rate=voice_cfg.sample_rate)
+            wav_data = wav_from_pcm(pcm_bytes, sample_rate=voice_cfg.sample_rate)
 
-        if audio_format == "mp3":
-            return convert_to_mp3(wav_data)
-        return wav_data
+            if audio_format == "mp3":
+                return convert_to_mp3(wav_data)
+            return wav_data
+
+    def release_assets(self, assets: set[str]) -> None:
+        for voice in RUSSIAN_VOICES:
+            if set(voice_asset_ids(voice)) & assets:
+                with _lock_for(voice):
+                    _voices.pop(voice, None)
 
     def cancel(self, job_id: str) -> None:
         # Piper runs synchronously per call — cancellation handled at job layer

@@ -1,4 +1,6 @@
 import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import socket
 import tempfile
 import unittest
@@ -7,7 +9,8 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from service.app import app
+from service.app import app, _release_provider_caches
+from service.core import model_catalog, model_lifecycle
 from service.core.config import config
 from service.core.model_catalog import Asset, ASSETS
 from service.core.setup import SetupNeeded, local_voice_paths
@@ -105,6 +108,60 @@ class LocalOnlyTests(unittest.TestCase):
              mock.patch.object(kokoro, "_kokoro", mock.Mock()):
             with self.assertRaises(SetupNeeded):
                 kokoro._load_kokoro("a")
+
+    def test_removal_waits_for_synthesis_then_evicts_cached_voice(self):
+        assets = {}
+        for asset_id in ("piper-dmitri-onnx", "piper-dmitri-config"):
+            original = ASSETS[asset_id]
+            content = asset_id.encode()
+            path = Path(self.temp.name) / original.path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            assets[asset_id] = Asset(original.id, original.path, len(content),
+                                     original.source, original.revision, original.license,
+                                     hashlib.sha256(content).hexdigest())
+        started = threading.Event()
+        finish = threading.Event()
+        fake_voice = mock.Mock()
+        fake_voice.config.sample_rate = 22050
+        fake_voice.config.length_scale = 1.0
+
+        def generate(*_args):
+            started.set()
+            if not finish.wait(5):
+                raise TimeoutError("synthesis not released")
+            yield mock.Mock(audio_int16_bytes=b"\x00\x00")
+
+        fake_voice.synthesize.side_effect = generate
+        fake_piper = mock.Mock()
+        fake_piper.PiperVoice.load.return_value = fake_voice
+        piper._voices.clear()
+        self.addCleanup(piper._voices.clear)
+        model_lifecycle.register_release(_release_provider_caches)
+        self.addCleanup(model_lifecycle.register_release, None)
+        headers = {"X-Local-Voice-Management": "secret"}
+        with mock.patch.dict(ASSETS, assets, clear=True), \
+             mock.patch.dict(model_catalog.LANGUAGES, {"ru": model_catalog.LANGUAGES["ru"]}, clear=True), \
+             mock.patch.dict("sys.modules", {"piper": fake_piper}), \
+             mock.patch.object(piper, "_espeak_data_dir", return_value="/fixture/espeak"), \
+             mock.patch.dict("os.environ", {"LV_MANAGEMENT_TOKEN": "secret"}), \
+             TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 1234)) as client, \
+             ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(client.post, "/synthesize", json={
+                "text": "unique concurrent test", "voice": "ru_RU-dmitri-medium", "format": "wav"})
+            try:
+                self.assertTrue(started.wait(5))
+                blocked = client.post("/models/removals", json={"languages": ["ru"]}, headers=headers)
+                self.assertEqual(blocked.status_code, 409, blocked.text)
+                self.assertTrue((Path(self.temp.name) / assets["piper-dmitri-onnx"].path).exists())
+            finally:
+                finish.set()
+            self.assertEqual(future.result(timeout=5).status_code, 200)
+            self.assertIn("ru_RU-dmitri-medium", piper._voices)
+            removed = client.post("/models/removals", json={"languages": ["ru"]}, headers=headers)
+            self.assertEqual(removed.status_code, 200, removed.text)
+            self.assertEqual(set(removed.json()["removed"]), set(assets))
+            self.assertNotIn("ru_RU-dmitri-medium", piper._voices)
 
     def test_unsupported_voice_rejected_before_loader(self):
         for voice in ("ru_RU-irina-medium", "af_unknown", "../../file"):

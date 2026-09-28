@@ -7,7 +7,8 @@ import tempfile
 from .base import TTSProvider
 from ..core.audio import wav_from_pcm, convert_to_mp3
 from ..core.config import config
-from ..core.setup import local_voice_paths, has_local_voice, SetupNeeded
+from ..core.setup import local_voice_paths, has_local_voice, voice_asset_ids, SetupNeeded
+from ..core import model_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -186,22 +187,27 @@ class KokoroProvider(TTSProvider):
     def synthesize(
         self, text: str, voice: str, rate: float, audio_format: str
     ) -> bytes:
-        paths = local_voice_paths(voice)
-        pipeline = _load_kokoro(_lang_code_for_voice(voice))
-        # Passing the path (with .pt) bypasses Kokoro's HF voice loader.
-        voice_path = str(paths[f"kokoro-{voice}"])
-        import numpy as np
+        with model_lifecycle.using(set(voice_asset_ids(voice))):
+            paths = local_voice_paths(voice)
+            pipeline = _load_kokoro(_lang_code_for_voice(voice))
+            # Passing the path (with .pt) bypasses Kokoro's HF voice loader.
+            voice_path = str(paths[f"kokoro-{voice}"])
+            import numpy as np
 
-        # samples is a numpy array of float32 [-1, 1]
-        pcm = _collect_audio_samples(pipeline(text, voice=voice_path, speed=rate))
-        pcm_int16 = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
-        pcm_bytes = pcm_int16.tobytes()
+            # samples is a numpy array of float32 [-1, 1]
+            pcm = _collect_audio_samples(pipeline(text, voice=voice_path, speed=rate))
+            pcm_int16 = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
+            pcm_bytes = pcm_int16.tobytes()
 
-        wav_data = wav_from_pcm(pcm_bytes, sample_rate=24000)
+            wav_data = wav_from_pcm(pcm_bytes, sample_rate=24000)
 
-        if audio_format == "mp3":
-            return convert_to_mp3(wav_data)
-        return wav_data
+            if audio_format == "mp3":
+                return convert_to_mp3(wav_data)
+            return wav_data
+
+    def release_assets(self, assets: set[str]) -> None:
+        if any(key.startswith("kokoro-") or key == "spacy-en-core-web-sm" for key in assets):
+            _pipelines.clear()
 
     def cancel(self, job_id: str) -> None:
         # Kokoro runs synchronously per call — cancellation handled at job layer
