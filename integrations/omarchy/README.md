@@ -2,6 +2,8 @@
 
 For Omarchy 4.0.4-1 on x86_64. This source plugin does not install a service, controller, desktop app, or model. It never reads the clipboard except when you press **Read clipboard**. It polls only the controller `status` command and loopback `/health` every three seconds. It holds no model-management token and sends no management request. Stop affects only controller playback, not Chrome or desktop playback.
 
+Shortcuts are an explicit separate step. With `local-voice-controller` on PATH, run `local-voice-integration setup --read 'SUPER ALT + V' --stop 'SUPER ALT + S'` with **shortcuts you choose**, then repeat with `--apply` after reviewing the exact output. The command checks the effective bindings with `hyprctl binds -j` and refuses collisions, but it does not override existing shortcuts. It appends one marked block to `~/.config/hypr/bindings.conf` and records that exact block in `~/.config/local-voice/omarchy-integration.json`. Run `hyprctl reload` and `hyprctl configerrors` in the target session after applying. To remove, preview `local-voice-integration remove`, then run `local-voice-integration remove --apply`; it refuses removal if its block was edited. The script never changes the panel, service, models, or `shell.json`. Package installation does not run it.
+
 After the T12 package supplies `local-voice-controller` and the `local-voice` desktop launcher on PATH, install the plugin manually (replace `$SOURCE` with this repository or the package's plugin source directory):
 
 ```sh
