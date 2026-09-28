@@ -12,13 +12,11 @@
       {
         "title": "Local Voice Desktop · Majestic Labs",
         "width": 1120,
-        "height": 920,
-        "minWidth": 1120,
-        "minHeight": 920,
-        "maxWidth": 1120,
-        "maxHeight": 920,
-        "resizable": false,
-        "maximizable": false,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 560,
+        "resizable": true,
+        "maximizable": true,
         "fullscreen": false
       }
     ],

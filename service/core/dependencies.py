@@ -1,4 +1,5 @@
 import os
+import platform
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,17 +110,23 @@ def ffmpeg_dependency_status() -> dict[str, object]:
             "location": str(ffmpeg),
         }
 
+    if platform.system() == "Linux":
+        guidance = (
+            "Install the ffmpeg package (on Omarchy: sudo pacman -S ffmpeg). "
+            "For the shared service, set LV_FFMPEG_PATH in a systemd user-service override "
+            "and restart local-voice.service."
+        )
+    else:
+        guidance = (
+            "Install it with brew install ffmpeg. "
+            "If the desktop app still cannot find it, set a custom ffmpeg path in app settings. "
+            "Standalone service runs can also use LV_FFMPEG_PATH."
+        )
     return {
         "name": "ffmpeg",
         "available": False,
         "required": True,
-        "detail": (
-            "ffmpeg is required for MP3 synthesis and export. "
-            "Checked PATH plus common Homebrew locations. "
-            "Install it with brew install ffmpeg. "
-            "If the desktop app still cannot find it, set a custom ffmpeg path in app settings. "
-            "Standalone service runs can also use LV_FFMPEG_PATH."
-        ),
+        "detail": f"ffmpeg is required for MP3 synthesis and export. {guidance}",
         "location": None,
     }
 

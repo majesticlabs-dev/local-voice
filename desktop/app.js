@@ -1,4 +1,5 @@
 import { stripMarkdown } from './markdown.js';
+import { healthBlockers } from './health.js';
 import { createModelManager, createNativeModelRequest } from './model-manager.js';
 
 const SETTINGS_KEY = 'local-voice-desktop-settings';
@@ -195,8 +196,7 @@ function dependencyErrorMessage(dependencies = []) {
 }
 
 function applyHealthState(health) {
-  const dependencies = Array.isArray(health?.dependencies) ? health.dependencies : [];
-  const blocking = blockingDependencies(dependencies);
+  const blocking = healthBlockers(health);
 
   state.healthSetupNeeded = health?.status === 'setup_needed' && !blocking.length;
   state.healthReady = (Boolean(health?.ready) || state.healthSetupNeeded) && blocking.length === 0;
@@ -602,7 +602,10 @@ async function playBlob(blob, token, { index = 0, startTime = 0 } = {}) {
         cleanupCurrentAudioUrl();
       }
       if (result === 'error') {
-        reject(new Error('Audio playback failed.'));
+        const guidance = /Linux/i.test(navigator.userAgent)
+          ? ' Check that WebKitGTK and the GStreamer MP3 decoder plugins are installed. FFmpeg encodes MP3 but does not decode it in the desktop player.'
+          : '';
+        reject(new Error(`Audio playback failed.${guidance}`));
       } else {
         resolve(result);
       }

@@ -42,13 +42,19 @@ class ResolveExecutableTests(unittest.TestCase):
 
 
 class DependencyStatusTests(unittest.TestCase):
-    def test_ffmpeg_dependency_reports_install_guidance_when_missing(self):
+    def test_ffmpeg_dependency_reports_platform_guidance_when_missing(self):
         with mock.patch.object(dependencies, "resolve_executable", return_value=None):
-            status = dependencies.ffmpeg_dependency_status()
+            with mock.patch.object(dependencies.platform, "system", return_value="Linux"):
+                linux = dependencies.ffmpeg_dependency_status()
+            with mock.patch.object(dependencies.platform, "system", return_value="Darwin"):
+                mac = dependencies.ffmpeg_dependency_status()
 
-        self.assertFalse(status["available"])
-        self.assertIn("brew install ffmpeg", status["detail"])
-        self.assertIn("LV_FFMPEG_PATH", status["detail"])
+        self.assertFalse(linux["available"])
+        self.assertIn("sudo pacman -S ffmpeg", linux["detail"])
+        self.assertIn("systemd user-service override", linux["detail"])
+        self.assertNotIn("brew", linux["detail"])
+        self.assertIn("brew install ffmpeg", mac["detail"])
+        self.assertIn("LV_FFMPEG_PATH", mac["detail"])
 
     def test_runtime_dependencies_include_provider_and_ffmpeg(self):
         with mock.patch.object(
