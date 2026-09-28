@@ -1,6 +1,7 @@
 import { stripMarkdown } from './markdown.js';
 import { healthBlockers } from './health.js';
 import { createSetupGuide, noVerifiedVoice } from './setup-guide.js';
+import { createErrorPresenter, serviceFetch } from './errors.js';
 import { createModelManager, createNativeModelRequest } from './model-manager.js';
 
 const SETTINGS_KEY = 'local-voice-desktop-settings';
@@ -143,9 +144,15 @@ function closeSettings() {
   render();
 }
 
+const errorPresenter = createErrorPresenter(messageDialog, (message) => {
+  state.startupErrorTitle = 'Service unavailable';
+  state.startupError = message;
+  render();
+});
+
 function showError(message) {
   setStatus('Error');
-  return messageDialog(message, { title: 'Local Voice Desktop', kind: 'error' });
+  return errorPresenter.show(message, { title: 'Local Voice Desktop', kind: 'error' });
 }
 
 function extractErrorDetail(payload) {
@@ -246,7 +253,9 @@ async function maybeNotifyStartupIssue() {
   }
 
   state.startupIssueNotice = noticeKey;
-  await messageDialog(state.startupError, {
+  // Keep the inline card usable when a native GTK dialog cannot take focus.
+  if (state.serviceInfo?.sharedService) return;
+  await errorPresenter.show(state.startupError, {
     title: `${state.startupErrorTitle} · Local Voice Desktop`,
     kind: 'error',
   });
@@ -409,7 +418,7 @@ function sleep(ms) {
 }
 
 async function fetchJson(path, options = {}) {
-  const response = await fetch(`${apiBase()}${path}`, options);
+  const response = await serviceFetch(fetch, `${apiBase()}${path}`, options);
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
@@ -417,7 +426,7 @@ async function fetchJson(path, options = {}) {
 }
 
 async function fetchBlob(path, options = {}) {
-  const response = await fetch(`${apiBase()}${path}`, options);
+  const response = await serviceFetch(fetch, `${apiBase()}${path}`, options);
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
@@ -426,7 +435,7 @@ async function fetchBlob(path, options = {}) {
 
 async function fetchChunkBlob(path) {
   for (let attempt = 0; attempt < 240; attempt += 1) {
-    const response = await fetch(`${apiBase()}${path}`);
+    const response = await serviceFetch(fetch, `${apiBase()}${path}`);
     if (response.ok) {
       return response.blob();
     }

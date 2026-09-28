@@ -1,5 +1,6 @@
 import importlib.util
 import logging
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -29,34 +30,22 @@ def _lang_code_for_voice(voice: str) -> str:
     return code if code in SUPPORTED_LANG_CODES else DEFAULT_LANG_CODE
 
 
+_espeak_staging: tempfile.TemporaryDirectory | None = None
+
+
 def _prepare_espeak_data_root(data_path: Path) -> Path:
+    global _espeak_staging
     direct_root = data_path.parent
-    if " " not in str(direct_root):
+    # The phonemizer fork resolves symlinks before calling espeak_Initialize.
+    # espeak-ng truncates long paths in its internal buffer, then looks for
+    # phontab in the wrong directory. A symlink alone cannot shorten that path.
+    if " " not in str(direct_root) and len(os.fsencode(data_path)) < 100:
         return direct_root
 
-    staging_root = Path(tempfile.gettempdir()) / "local-voice-espeak"
-    staging_data = staging_root / "espeak-ng-data"
-    resolved_data_path = data_path.resolve()
-
-    if staging_data.exists() or staging_data.is_symlink():
-        try:
-            if staging_data.resolve() == resolved_data_path:
-                return staging_root
-        except OSError:
-            pass
-
-        if staging_data.is_symlink() or staging_data.is_file():
-            staging_data.unlink()
-        else:
-            shutil.rmtree(staging_data)
-
-    staging_root.mkdir(parents=True, exist_ok=True)
-    try:
-        staging_data.symlink_to(resolved_data_path, target_is_directory=True)
-    except OSError:
-        shutil.copytree(resolved_data_path, staging_data)
-
-    return staging_root
+    if _espeak_staging is None:
+        _espeak_staging = tempfile.TemporaryDirectory(prefix="lv-espeak-")
+        shutil.copytree(data_path, Path(_espeak_staging.name) / "espeak-ng-data")
+    return Path(_espeak_staging.name)
 
 
 def _configure_espeak_backend() -> None:

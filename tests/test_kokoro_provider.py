@@ -1,6 +1,11 @@
+import importlib.util
+import os
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from service.providers import kokoro
@@ -28,22 +33,35 @@ class ConfigureEspeakBackendTest(unittest.TestCase):
             kokoro.Path("/tmp/espeakng_loader"),
         )
 
-    def test_prepare_espeak_data_root_stages_spacey_path(self):
-        with patch.object(
-            kokoro.tempfile, "gettempdir", return_value="/tmp/space-free"
-        ):
-            with patch.object(kokoro.shutil, "copytree") as copytree:
-                data_dir = kokoro.Path(
-                    "/tmp/Local Voice/espeakng_loader/espeak-ng-data"
-                )
-
-                with patch.object(kokoro.Path, "resolve", return_value=data_dir):
-                    with patch.object(kokoro.Path, "symlink_to") as symlink_to:
-                        staged_root = kokoro._prepare_espeak_data_root(data_dir)
-
-        self.assertEqual(staged_root, kokoro.Path("/tmp/space-free/local-voice-espeak"))
-        symlink_to.assert_called_once_with(data_dir, target_is_directory=True)
-        copytree.assert_not_called()
+    @unittest.skipUnless(importlib.util.find_spec("espeakng_loader"), "eSpeak runtime missing")
+    def test_long_runtime_path_initializes_real_english_espeak_fallback(self):
+        # Run in a child: the old path makes espeak-ng call exit(1), which must
+        # fail this test without killing the whole suite. No model weights needed.
+        code = """
+import espeakng_loader
+from phonemizer.backend.espeak.wrapper import EspeakWrapper
+from misaki.espeak import EspeakFallback
+from service.providers.kokoro import _prepare_espeak_data_root
+from pathlib import Path
+import os
+root = _prepare_espeak_data_root(Path(os.environ['ESPEAK_TEST_DATA']))
+EspeakWrapper.set_library(espeakng_loader.get_library_path())
+EspeakWrapper.set_data_path(str(root))
+fallback = EspeakFallback(british=False)
+assert fallback.backend.phonemize(['hello'])
+"""
+        with tempfile.TemporaryDirectory(prefix="lv-espeak-test-") as temp:
+            long_parent = Path(temp) / ("long-relocatable-package-path-" * 6)
+            long_parent.mkdir()
+            (long_parent / "espeak-ng-data").symlink_to(
+                Path(__import__("espeakng_loader").get_data_path()), target_is_directory=True
+            )
+            env = {**os.environ, "ESPEAK_TEST_DATA": str(long_parent / "espeak-ng-data")}
+            result = subprocess.run(
+                [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
+                env=env, capture_output=True, text=True, timeout=30, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_configures_wrapper_with_prepared_data_root(self):
         fake_loader = types.SimpleNamespace(
