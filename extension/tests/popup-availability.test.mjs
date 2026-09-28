@@ -29,8 +29,8 @@ test('popup marks unavailable voices and retains the stored selection', async ()
   globalThis.fetch = async (url) => url.endsWith('/health')
     ? Response.json({ status: 'setup_needed', ready: false, engine: 'kokoro', dependencies: [] })
     : Response.json({ voices: [
-      { id: 'af_bella', label: 'Bella', available: false },
-      { id: 'ef_dora', label: 'Dora', available: true },
+      { id: 'af_bella', label: 'Bella', language: 'en', gender: 'f', sample_rate: 24000, available: false },
+      { id: 'ef_dora', label: 'Dora', language: 'es', gender: 'f', sample_rate: 24000, available: true },
     ] });
   await import('../src/popup.js');
   await new Promise((resolve) => setTimeout(resolve, 10));
