@@ -1,5 +1,6 @@
 import { stripMarkdown } from './markdown.js';
 import { healthBlockers } from './health.js';
+import { createSetupGuide, noVerifiedVoice } from './setup-guide.js';
 import { createModelManager, createNativeModelRequest } from './model-manager.js';
 
 const SETTINGS_KEY = 'local-voice-desktop-settings';
@@ -45,6 +46,7 @@ const state = {
   lastSpeak: null,
   voicesLoaded: false,
   modelCatalog: null,
+  modelsChecked: false,
   track: null,
   estimatedDuration: 0,
 };
@@ -70,6 +72,8 @@ const els = {
   resetText: document.querySelector('#reset-text'),
   restartButton: document.querySelector('#restart-button'),
   settingsButton: document.querySelector('#settings-button'),
+  setupCallout: document.querySelector('#setup-callout'),
+  setupVoicesButton: document.querySelector('#setup-voices-button'),
   settingsClose: document.querySelector('#settings-close'),
   settingsOverlay: document.querySelector('#settings-overlay'),
   serverMode: document.querySelector('#server-mode'),
@@ -307,7 +311,8 @@ function render() {
   els.resetText.hidden = !hasText;
   const voiceAvailable = !state.modelCatalog ? !state.healthSetupNeeded : state.modelCatalog.languages.some((language) =>
     language.voices.some((voice) => voice.id === els.voiceSelect.value && voice.installed));
-  els.speakButton.disabled = !state.healthReady || !voiceAvailable || !hasText || state.loading;
+  els.setupCallout.hidden = !state.healthSetupNeeded || !noVerifiedVoice(state.modelCatalog);
+  els.speakButton.disabled = !state.healthReady || !hasText || state.loading;
   els.pauseButton.disabled = !(state.playing || state.paused);
   els.pauseButton.textContent = state.paused ? 'Resume' : 'Pause';
   els.stopButton.disabled = !(state.playing || state.paused || state.loading);
@@ -468,6 +473,8 @@ async function healthPoll() {
     }
   } finally {
     render();
+    setupGuide.promptOnce({ setupNeeded: state.healthSetupNeeded, modelsChecked: state.modelsChecked,
+      catalog: state.modelCatalog });
     await maybeNotifyStartupIssue();
   }
 }
@@ -750,6 +757,9 @@ async function handleSpeak() {
     await showError('There is no readable text to synthesize.');
     return;
   }
+  if (!await setupGuide.requireVoice({ setupNeeded: state.healthSetupNeeded, catalog: state.modelCatalog })) {
+    return;
+  }
 
   await stopPlayback({ cancelServer: false });
 
@@ -970,6 +980,12 @@ function bindFileDrop() {
   });
 }
 
+function openModels({ refresh = true } = {}) {
+  els.modelsOverlay.hidden = false;
+  if (refresh) modelManager.refresh();
+}
+
+const setupGuide = createSetupGuide((refresh) => openModels({ refresh }), showError);
 const modelRequest = createNativeModelRequest(invoke);
 
 const modelManager = createModelManager({
@@ -1012,10 +1028,8 @@ async function init() {
     syncRateLabel();
     saveSettings();
   });
-  els.modelsButton.addEventListener('click', () => {
-    els.modelsOverlay.hidden = false;
-    modelManager.refresh();
-  });
+  els.modelsButton.addEventListener('click', () => openModels());
+  els.setupVoicesButton.addEventListener('click', () => openModels());
   els.modelsClose.addEventListener('click', () => { els.modelsOverlay.hidden = true; });
   els.modelsOverlay.addEventListener('click', (event) => {
     if (event.target === els.modelsOverlay) els.modelsOverlay.hidden = true;
@@ -1069,6 +1083,9 @@ async function init() {
 
   await healthPoll();
   await modelManager.refresh();
+  state.modelsChecked = true;
+  setupGuide.promptOnce({ setupNeeded: state.healthSetupNeeded, modelsChecked: state.modelsChecked,
+    catalog: state.modelCatalog });
   syncTimeLabel();
   setInterval(() => {
     healthPoll().catch(() => {});

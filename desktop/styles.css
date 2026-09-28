@@ -322,6 +322,19 @@ textarea {
   font-size: 0.95rem;
 }
 
+.setup-callout {
+  margin: 10px 0;
+  padding: 16px;
+  border: 1px solid rgba(159, 60, 22, 0.25);
+  border-radius: 18px;
+  background: var(--panel-strong);
+}
+
+.setup-callout p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
 .startup-error-card {
   margin-top: 10px;
   padding: 18px;
