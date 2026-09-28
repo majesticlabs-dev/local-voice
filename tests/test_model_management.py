@@ -61,9 +61,9 @@ class ModelManagementTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"LV_MANAGEMENT_TOKEN": ""}):
             self.assertEqual(self.client.get("/models", headers=headers).status_code, 403)
 
-    def test_reserved_removal_and_invalid_request(self):
+    def test_removal_requires_provider_release_and_invalid_request(self):
         headers = {"X-Local-Voice-Management": "test-secret"}
-        self.assertEqual(self.client.post("/models/removals", json={"languages": ["ru"]}, headers=headers).status_code, 501)
+        self.assertEqual(self.client.post("/models/removals", json={"languages": ["ru"]}, headers=headers).status_code, 409)
         self.assertEqual(self.client.post("/models/downloads", json={"languages": ["other"]}, headers=headers).status_code, 422)
         blocked = self.client.post("/models/downloads", json={"languages": ["en"]}, headers=headers)
         self.assertEqual(blocked.status_code, 409)

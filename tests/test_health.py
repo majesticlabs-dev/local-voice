@@ -57,7 +57,7 @@ class HealthApiTests(unittest.IsolatedAsyncioTestCase):
         with provider_patch, deps_patch:
             response = await health_api.health()
 
-        self.assertEqual(response.status, "degraded")
+        self.assertEqual(response.status, "setup_needed")
         self.assertFalse(response.ready)
         self.assertEqual(response.engine, "kokoro+piper")
 

@@ -71,14 +71,8 @@ class ConfigureEspeakBackendTest(unittest.TestCase):
 
 
 class IsReadyTest(unittest.TestCase):
-    def test_is_ready_returns_false_when_load_raises_system_exit(self):
-        # A dependency (e.g. spaCy model resolution) may call sys.exit() on
-        # failure, raising SystemExit (a BaseException, not Exception). The
-        # provider must degrade to "not ready" rather than crash startup.
-        def boom():
-            raise SystemExit(1)
-
-        with patch.object(kokoro, "_load_kokoro", side_effect=boom):
+    def test_readiness_does_not_enter_transitive_loader(self):
+        with patch.object(kokoro, "_load_kokoro", side_effect=AssertionError("loaded")):
             self.assertFalse(kokoro.KokoroProvider().is_ready())
 
 

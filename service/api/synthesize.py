@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from ..core.config import config
 from ..core.models import SynthesizeRequest
 from ..core.cache import cache_key, get_cached, put_cached
+from ..core.setup import local_voice_paths, SetupNeeded
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,6 +31,7 @@ async def synthesize(req: SynthesizeRequest):
         raise HTTPException(400, "Empty text")
 
     fmt = req.format if req.format in MIME else "mp3"
+    local_voice_paths(req.voice)
     key = cache_key(req.text, req.voice, req.rate, fmt)
 
     cached = get_cached(key, fmt)
@@ -37,15 +39,13 @@ async def synthesize(req: SynthesizeRequest):
         return Response(content=cached, media_type=MIME[fmt])
 
     provider = _get_provider()
-    if not provider.is_ready():
-        raise HTTPException(503, "TTS engine not ready")
-
     try:
-        # Synthesis is CPU-bound (and Piper may download a model on first
-        # use); keep it off the event loop so other requests stay live.
+        # Synthesis is CPU-bound; keep it off the event loop.
         audio_bytes = await asyncio.to_thread(
             provider.synthesize, req.text, req.voice, req.rate, fmt
         )
+    except SetupNeeded:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Synthesis error: {e}")
 

@@ -23,8 +23,9 @@ async def health():
         status.model_name for status in statuses if status.model_name
     )
 
+    setup_needed = not ready and bool(statuses) and all(status.error is None for status in statuses)
     return HealthResponse(
-        status="ok" if ready else "degraded",
+        status="ok" if ready else ("setup_needed" if setup_needed else "degraded"),
         engine=engine_label,
         model=model_label,
         ready=ready,
