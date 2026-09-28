@@ -1,4 +1,4 @@
-"""Local management contract. Lifecycle operations are reserved for T03b/T03c."""
+"""Local-only model management API."""
 import hmac
 import ipaddress
 import os
@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..core.model_catalog import catalog
+from ..core import model_downloads, model_lifecycle
 
 router = APIRouter(prefix="/models", tags=["model management"])
 _NATIVE_ORIGINS = {"tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}
@@ -40,26 +41,66 @@ class RemoveRequest(BaseModel):
     languages: list[LanguageId] = Field(min_length=1)
 
 
+class MigrationRequest(BaseModel):
+    candidates: list[str] = Field(min_length=1)
+
+
+@router.on_event("startup")
+def start_management():
+    model_lifecycle.startup()
+
+
+@router.on_event("shutdown")
+def stop_management():
+    model_lifecycle.shutdown()
+
+
 @router.get("", dependencies=[Depends(authorize)])
 def list_models():
     return catalog()
 
 
-@router.post("/downloads", status_code=501, dependencies=[Depends(authorize)])
+@router.post("/downloads", status_code=202, dependencies=[Depends(authorize)])
 def start_download(request: DownloadRequest):
-    raise HTTPException(501, "Download jobs are not implemented (T03b)")
+    try:
+        job, _ = model_downloads.start(request.languages)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return job.response()
 
 
 @router.get("/downloads/{job_id}", dependencies=[Depends(authorize)])
 def download_status(job_id: str):
-    raise HTTPException(501, "Download jobs are not implemented (T03b)")
+    job = model_downloads.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown download job")
+    return job.response()
 
 
-@router.post("/downloads/{job_id}/cancel", status_code=501, dependencies=[Depends(authorize)])
+@router.post("/downloads/{job_id}/cancel", dependencies=[Depends(authorize)])
 def cancel_download(job_id: str):
-    raise HTTPException(501, "Download jobs are not implemented (T03b)")
+    job = model_downloads.cancel(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown download job")
+    return job.response()
 
 
-@router.post("/removals", status_code=501, dependencies=[Depends(authorize)])
+@router.post("/removals", dependencies=[Depends(authorize)])
 def remove_models(request: RemoveRequest):
-    raise HTTPException(501, "Removal is not implemented (T03c)")
+    try:
+        return model_lifecycle.remove(request.languages)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/migration", dependencies=[Depends(authorize)])
+def migration_candidates():
+    return {"candidates": model_lifecycle.discover()}
+
+
+@router.post("/migration", dependencies=[Depends(authorize)])
+def migrate_models(request: MigrationRequest):
+    try:
+        return model_lifecycle.migrate(request.candidates)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
