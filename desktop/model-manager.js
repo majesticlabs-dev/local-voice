@@ -1,8 +1,33 @@
-// Model management is a native-only API. The caller supplies a token getter;
-// never persist the token in web storage or send it to synthesis endpoints.
+// Model management uses a bounded native proxy. No token reaches JavaScript.
 const JOB_KEY = 'local-voice-model-job';
 const active = (job) => job && ['queued', 'downloading'].includes(job.status);
 const bytes = (size) => size == null ? 'unknown size' : `${(size / 1048576).toFixed(1)} MiB`;
+
+export function createNativeModelRequest(invoke) {
+  return async (path, options = {}) => {
+    if (!invoke) throw new Error('Native desktop authorization is unavailable.');
+    const method = options.method ?? 'GET';
+    const job = /^\/models\/downloads\/([0-9a-f]{32})(\/cancel)?$/.exec(path);
+    let action;
+    if (path === '/models' && method === 'GET') action = 'catalog';
+    else if (path === '/models/downloads' && method === 'POST') action = 'download';
+    else if (path === '/models/removals' && method === 'POST') action = 'remove';
+    else if (path === '/models/migration' && method === 'GET') action = 'migration';
+    else if (path === '/models/migration' && method === 'POST') action = 'migrate';
+    else if (job && method === (job[2] ? 'POST' : 'GET')) action = job[2] ? 'cancel' : 'job';
+    else throw new Error('Invalid model management route.');
+    let body = {};
+    if (['download', 'remove', 'migrate'].includes(action)) {
+      try { body = JSON.parse(options.body); } catch { throw new Error('Invalid model management request.'); }
+    }
+    try {
+      return await invoke('manage_models', { action, jobId: job?.[1] ?? null,
+        languages: body.languages ?? null, candidates: body.candidates ?? null });
+    } catch (error) {
+      throw new Error(error?.message ?? String(error));
+    }
+  };
+}
 
 export function choiceAssets(catalog, ids) {
   const required = new Set(catalog.languages.filter((language) => ids.includes(language.id))

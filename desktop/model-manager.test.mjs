@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createModelManager, choiceAssets } from './model-manager.js';
+import { createModelManager, choiceAssets, createNativeModelRequest } from './model-manager.js';
 
 class Element {
   constructor() { this.children = []; this.listeners = {}; this.hidden = false; this.disabled = false; this.value = ''; }
@@ -57,6 +57,27 @@ function setup({ savedJob, responses = {} } = {}) {
   } });
   return { root: root.elements, manager, calls, confirms, store };
 }
+
+test('native proxy maps every management route without returning a token to JavaScript', async () => {
+  const seen = [];
+  const request = createNativeModelRequest(async (command, args) => {
+    seen.push({ command, ...args });
+    return { ok: true };
+  });
+  const id = 'a'.repeat(32);
+  const candidate = 'b'.repeat(24);
+  await request('/models');
+  await request('/models/downloads', { method: 'POST', body: JSON.stringify({ languages: ['es'] }) });
+  await request(`/models/downloads/${id}`);
+  await request(`/models/downloads/${id}/cancel`, { method: 'POST' });
+  await request('/models/removals', { method: 'POST', body: JSON.stringify({ languages: ['ru'] }) });
+  await request('/models/migration');
+  await request('/models/migration', { method: 'POST', body: JSON.stringify({ candidates: [candidate] }) });
+  assert.deepEqual(seen.map(({ action }) => action), ['catalog', 'download', 'job', 'cancel', 'remove', 'migration', 'migrate']);
+  assert.ok(seen.every(({ command, ...args }) => command === 'manage_models' && !('token' in args)));
+  assert.deepEqual(seen[6].candidates, [candidate]);
+  await assert.rejects(request('/models/other'), /Invalid model management route/);
+});
 
 test('selection lists shared bytes once, unknown sizes, and never starts a download', async () => {
   const t = setup();

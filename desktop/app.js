@@ -1,5 +1,5 @@
 import { stripMarkdown } from './markdown.js';
-import { createModelManager } from './model-manager.js';
+import { createModelManager, createNativeModelRequest } from './model-manager.js';
 
 const SETTINGS_KEY = 'local-voice-desktop-settings';
 const DEFAULT_SETTINGS = {
@@ -967,23 +967,7 @@ function bindFileDrop() {
   });
 }
 
-// T06 supplies this native command. Until then management stays unavailable.
-async function managementToken() {
-  if (!invoke) throw new Error('Native desktop authorization is unavailable.');
-  const token = await invoke('get_management_token');
-  if (!token) throw new Error('Management token is not configured.');
-  return token;
-}
-
-async function modelRequest(path, options = {}) {
-  const token = await managementToken();
-  const response = await fetch(`${apiBase()}${path}`, {
-    ...options,
-    headers: { 'X-Local-Voice-Management': token, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
-  });
-  if (!response.ok) throw new Error(await responseErrorMessage(response));
-  return response.json();
-}
+const modelRequest = createNativeModelRequest(invoke);
 
 const modelManager = createModelManager({
   root: document.querySelector('#models-overlay'),
