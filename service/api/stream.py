@@ -69,7 +69,7 @@ def _synthesize_chunks(
 
 @router.post("/stream", response_model=StreamResponse)
 async def stream(req: StreamRequest):
-    logger.info("Stream: %d chars, first 80: %s", len(req.text), repr(req.text[:80]))
+    logger.info("Stream: %d chars", len(req.text))
 
     if not req.text.strip():
         raise HTTPException(400, "Empty text")

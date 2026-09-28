@@ -23,7 +23,7 @@ MIME = {"mp3": "audio/mpeg", "wav": "audio/wav"}
 
 @router.post("/synthesize")
 async def synthesize(req: SynthesizeRequest):
-    logger.info("Synthesize: %d chars, first 80: %s", len(req.text), repr(req.text[:80]))
+    logger.info("Synthesize: %d chars", len(req.text))
     if len(req.text) > config.max_input_length:
         raise HTTPException(400, f"Text exceeds max length ({config.max_input_length})")
 
