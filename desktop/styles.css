@@ -278,6 +278,42 @@ textarea {
   font-size: 0.92rem;
 }
 
+.model-dialog {
+  max-height: min(90vh, 850px);
+  overflow: auto;
+}
+
+.model-choices {
+  display: grid;
+  gap: 10px;
+}
+
+.model-choices label {
+  display: block;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.model-choices input {
+  margin-right: 8px;
+}
+
+.model-choices span {
+  color: var(--muted);
+}
+
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+#model-message, #model-progress {
+  overflow-wrap: anywhere;
+}
+
 .file-badge {
   margin: 10px 0 0;
   padding: 8px 10px;
