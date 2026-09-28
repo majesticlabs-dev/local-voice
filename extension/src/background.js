@@ -1,12 +1,12 @@
-import { LocalTTSClient } from './api.js';
+import { LocalTTSClient, SETUP_GUIDANCE } from './api.js';
 import { loadSettings } from './store.js';
 import { JOB_STATUS, MSG, CHUNK_THRESHOLD } from './constants.js';
 
 const JOB_STORAGE_KEY = 'activeJob';
 const SERVICE_HEALTH_ALARM = 'service-health-check';
 const SERVICE_HEALTH_POLL_MINUTES = 1;
-const APP_UNAVAILABLE_STATUS = 'Open Local Voice app';
-const APP_UNAVAILABLE_MESSAGE = 'Open the Local Voice application so its local service starts, then try again.';
+const APP_UNAVAILABLE_STATUS = 'Local Voice service unavailable';
+const APP_UNAVAILABLE_MESSAGE = 'Start the Local Voice desktop app or its local service, then try again.';
 const APP_UNAVAILABLE_NOTIFICATION_ID = 'local-voice-app-unavailable';
 const PLAYER_READY_RETRIES = 30;
 const PLAYER_READY_DELAY_MS = 100;
@@ -175,7 +175,7 @@ async function ensureOffscreen() {
 async function setActionIndicator(available, engine = '') {
   const title = available
     ? `Local Voice Reader: ${engine || 'service ready'}`
-    : 'Local Voice Reader: open the Local Voice app';
+    : 'Local Voice Reader: local service unavailable';
 
   try {
     await chrome.action.setTitle({ title });
@@ -194,9 +194,9 @@ async function updateServiceIndicator() {
   try {
     const client = await getApi();
     const health = await client.health();
-    const engineLabel = health?.ready
-      ? (health?.engine || 'service ready')
-      : `${health?.engine || 'service'} warming`;
+    const engineLabel = health?.status === 'setup_needed'
+      ? 'model setup required in desktop app'
+      : health?.ready ? (health?.engine || 'service ready') : `${health?.engine || 'service'} unavailable`;
     await setActionIndicator(true, engineLabel);
   } catch (_) {
     await setActionIndicator(false);
@@ -657,7 +657,7 @@ async function speak(extraction, tabId) {
       notifyAppUnavailable().catch(() => {});
       return;
     }
-    setJobError('Playback failed');
+    setJobError(errorMessageOf(err) === SETUP_GUIDANCE ? SETUP_GUIDANCE : 'Playback failed');
   }
 }
 
@@ -758,7 +758,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             setJobError(APP_UNAVAILABLE_STATUS);
             notifyAppUnavailable().catch(() => {});
           } else {
-            setJobError('Playback failed');
+            setJobError(errorMessageOf(err) === SETUP_GUIDANCE ? SETUP_GUIDANCE : 'Playback failed');
           }
           sendResponse({ ok: false, error: err.message });
         }
