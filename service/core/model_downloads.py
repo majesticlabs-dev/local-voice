@@ -9,6 +9,7 @@ import uuid
 from urllib.request import urlopen
 
 from . import model_catalog as catalog
+from . import model_lifecycle
 from .config import config
 
 
@@ -54,7 +55,7 @@ def start(languages: list[str]) -> tuple[Job, bool]:
     global _active
     selected = tuple(sorted(set(languages)))
     root = config.models_dir
-    with _lock:
+    with model_lifecycle._lock, _lock:
         if _active and _jobs[_active].status in ("queued", "downloading"):
             job = _jobs[_active]
             if job.languages == selected and job.root == root:
@@ -137,12 +138,15 @@ def _run(job: Job) -> None:
                 raise ValueError(f"Invalid checksum or size for {asset.id}")
         if not job.cancelled.is_set():
             # No asset is promoted until all missing files have passed validation.
-            for asset in job.assets:
-                dest = _safe_path(root, asset.path)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(_safe_path(stage, asset.path), dest)
-            with _lock:
-                job.status = "completed"
+            with model_lifecycle._lock:
+                if any(model_lifecycle._in_use.get(asset.id) for asset in job.assets):
+                    raise RuntimeError("Model assets are in use")
+                for asset in job.assets:
+                    dest = _safe_path(root, asset.path)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(_safe_path(stage, asset.path), dest)
+                with _lock:
+                    job.status = "completed"
         else:
             with _lock:
                 job.status = "cancelled"
