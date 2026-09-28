@@ -1,6 +1,6 @@
 # Local build recipe. Run scripts/check-and-package from the source checkout.
 pkgname=local-voice
-pkgver=1.1.1
+pkgver=1.2.0
 pkgrel=1
 pkgdesc='Local Voice desktop, shared TTS service, and Omarchy controls'
 arch=('x86_64')

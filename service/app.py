@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_voice")
 
-app = FastAPI(title="Local Voice TTS", version="1.1.1")
+app = FastAPI(title="Local Voice TTS", version="1.2.0")
 
 
 @app.exception_handler(SetupNeeded)

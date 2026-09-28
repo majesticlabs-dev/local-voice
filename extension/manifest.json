@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Local Voice Reader",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Read any web page aloud using a high-quality local TTS engine. Private, fast, and offline after model setup. Your text stays on your device.",
   "homepage_url": "https://majesticlabs.dev",
   "permissions": [
