@@ -2,15 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RELEASE_DIR="$ROOT_DIR/src-tauri/target/release"
+RELEASE_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/src-tauri/target}/release"
 APP_NAME="Local Voice Desktop.app"
-APP_BUNDLE="$ROOT_DIR/src-tauri/target/release/bundle/macos/$APP_NAME"
-DMG_DIR="$ROOT_DIR/src-tauri/target/release/bundle/dmg"
+APP_BUNDLE="$RELEASE_DIR/bundle/macos/$APP_NAME"
+DMG_DIR="$RELEASE_DIR/bundle/dmg"
 DMG_STAGING_DIR="$DMG_DIR/.staging"
 DMG_PATH="$DMG_DIR/Local Voice Desktop.dmg"
 BUNDLED_RUNTIME_DIR="$ROOT_DIR/.bundle-venv"
+BUILD_VENV_DIR="$ROOT_DIR/.bundle-build-venv"
 build_args=()
 requested_bundles=()
+prepare_only=0
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -38,6 +40,9 @@ parse_build_args() {
   while (($#)); do
     arg="$1"
     case "$arg" in
+      --prepare-runtime-only)
+        prepare_only=1
+        ;;
       --bundles|-b)
         shift
         if (($# == 0)); then
@@ -57,7 +62,11 @@ parse_build_args() {
   done
 
   if [[ ${#requested_bundles[@]} -eq 0 ]]; then
-    requested_bundles=("app")
+    if [[ "$build_platform" == Linux ]]; then
+      requested_bundles=("deb")
+    else
+      requested_bundles=("app")
+    fi
   fi
 }
 
@@ -144,16 +153,35 @@ create_dmg_from_app() {
   rm -rf "$DMG_STAGING_DIR"
 }
 
-parse_build_args "$@"
-bundle_list_for_tauri
+build_platform="$(uname -s)"
+case "$build_platform" in
+  Darwin)
+    parse_build_args "$@"
+    bundle_list_for_tauri
+    require_cmd codesign
+    require_cmd ditto
+    require_cmd xattr
+    ;;
+  Linux)
+    parse_build_args "$@"
+    if [[ ${#requested_bundles[@]} -ne 1 || "${requested_bundles[0]}" != "deb" ]]; then
+      echo "Linux builds support only --bundles deb (Arch packaging is handled in T12)." >&2
+      exit 1
+    fi
+    require_cmd uv
+    ;;
+  *) echo "Unsupported build platform: $build_platform" >&2; exit 1 ;;
+esac
+if [[ $prepare_only -eq 1 && "$build_platform" != Linux ]]; then
+  echo "--prepare-runtime-only is Linux-only." >&2
+  exit 1
+fi
+if [[ $prepare_only -eq 0 ]]; then
+  require_cmd npx
+  require_cmd cargo
+fi
 
-require_cmd npx
-require_cmd cargo
-require_cmd codesign
-require_cmd ditto
-require_cmd xattr
-
-prepare_bundled_python_runtime() {
+prepare_macos_python_runtime() {
   local source_venv_dir="$ROOT_DIR/.venv"
   local python_bin="$source_venv_dir/bin/python"
   local source_python
@@ -214,11 +242,72 @@ prepare_bundled_python_runtime() {
   touch "$BUNDLED_RUNTIME_DIR/.gitkeep"
 }
 
+prepare_linux_python_runtime() {
+  local python_bin source_root staging
+  if [[ "$(uv --version)" != "uv 0.9.26" ]]; then
+    echo "Linux build requires uv 0.9.26 for the locked runtime." >&2
+    exit 1
+  fi
+  python_bin="$(uv python find 3.12.12 --managed-python)"
+  source_root="$("$python_bin" -c 'import sys; print(sys.base_prefix)')"
+  if [[ ! -f "$source_root/lib/libpython3.12.so.1.0" ]]; then
+    echo "Managed Python 3.12.12 is missing libpython: $source_root" >&2
+    exit 1
+  fi
+
+  # Keep the dependency environment disposable. Never bundle absolute venv links,
+  # pyvenv.cfg, or the build machine's interpreter location.
+  UV_PROJECT_ENVIRONMENT="$BUILD_VENV_DIR" uv sync --locked --python "$python_bin" \
+    --managed-python --no-install-project --no-install-package en-core-web-sm --link-mode copy
+  staging="$ROOT_DIR/.bundle-venv.tmp"
+  rm -rf "$staging"
+  cp -a "$source_root" "$staging"
+  find "$staging/bin" -mindepth 1 -maxdepth 1 \
+    ! -name python ! -name python3 ! -name python3.12 -exec rm -rf {} +
+  cp -a "$BUILD_VENV_DIR/lib/python3.12/site-packages/." "$staging/lib/python3.12/site-packages/"
+  rm -f "$staging/lib/python3.12/site-packages/_virtualenv.pth" \
+    "$staging/lib/python3.12/site-packages/_virtualenv.py" \
+    "$staging/lib/python3.12/site-packages/distutils-precedence.pth"
+  # A .pth with absolute references can escape the package at runtime.
+  if find "$staging/lib/python3.12/site-packages" -name '*.pth' -type f -print0 |
+      xargs -0 -r grep -lE '^(/|import )' | grep -q .; then
+    echo "Bundled site-packages contains non-relocatable .pth entries." >&2
+    rm -rf "$staging"
+    exit 1
+  fi
+  rm -rf "$BUNDLED_RUNTIME_DIR"
+  mv "$staging" "$BUNDLED_RUNTIME_DIR"
+
+  # Run from a relocated, read-only copy with no developer PATH or venv.
+  local probe
+  probe="$(mktemp -d)"
+  cp -a --reflink=auto "$BUNDLED_RUNTIME_DIR" "$probe/runtime"
+  chmod -R a-w "$probe/runtime"
+  if ! (cd "$probe" && env -i HOME="$probe" PATH=/usr/bin:/bin \
+      PYTHONHOME="$probe/runtime" PYTHONNOUSERSITE=1 \
+      "$probe/runtime/bin/python" -c \
+      'import fastapi, uvicorn, numpy, yaml, torch, kokoro, piper; import ssl, sqlite3; print("Relocated Python runtime imports succeeded")'); then
+    chmod -R u+w "$probe/runtime"
+    rm -rf "$probe"
+    echo "Relocated Linux runtime failed its import check." >&2
+    exit 1
+  fi
+  chmod -R u+w "$probe/runtime"
+  rm -rf "$probe"
+}
+
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "Warning: ffmpeg is not installed. Audio export/playback may fail at runtime." >&2
 fi
 
-prepare_bundled_python_runtime
+if [[ "$build_platform" == Linux ]]; then
+  prepare_linux_python_runtime
+else
+  prepare_macos_python_runtime
+fi
+if [[ $prepare_only -eq 1 ]]; then
+  exit 0
+fi
 
 cd "$ROOT_DIR"
 
@@ -226,7 +315,12 @@ echo "Cleaning previous release output..."
 rm -rf "$RELEASE_DIR"
 
 echo "Building Local Voice Desktop..."
-npx @tauri-apps/cli build "${build_args[@]}"
+if [[ "$build_platform" == Linux ]]; then
+  npx --yes @tauri-apps/cli@2.10.1 build --bundles deb "${build_args[@]}"
+  echo "Linux bundle output: $RELEASE_DIR/bundle/deb/"
+  exit 0
+fi
+npx --yes @tauri-apps/cli@2.10.1 build "${build_args[@]}"
 
 echo
 if [[ -d "$APP_BUNDLE" ]]; then

@@ -465,7 +465,14 @@ fn bundled_python_runtime_complete(venv_root: &Path) -> bool {
         entry
             .file_name()
             .to_str()
-            .map(|name| name.starts_with("libpython") && name.ends_with(".dylib"))
+            .map(|name| {
+                name.starts_with("libpython")
+                    && (if cfg!(target_os = "linux") {
+                        name.contains(".so")
+                    } else {
+                        name.ends_with(".dylib")
+                    })
+            })
             .unwrap_or(false)
     });
 
@@ -675,8 +682,16 @@ fn build_service_command(
             if !cfg!(debug_assertions) {
                 command
                     .env("PYTHONHOME", &runtime_root)
-                    .env("PYTHONPATH", bundled_pythonpath(&runtime_root)?)
                     .env("PYTHONNOUSERSITE", "1");
+                // The Linux standalone interpreter finds its standard library and
+                // site-packages relative to PYTHONHOME. Retain macOS's existing path.
+                if cfg!(target_os = "linux") {
+                    command
+                        .env_remove("PYTHONPATH")
+                        .env("PYTHONDONTWRITEBYTECODE", "1");
+                } else {
+                    command.env("PYTHONPATH", bundled_pythonpath(&runtime_root)?);
+                }
             }
             command.arg("-m").arg("uvicorn");
             command
@@ -891,7 +906,12 @@ mod tests {
 
         assert!(!bundled_python_runtime_complete(&venv_root));
 
-        fs::write(venv_root.join("lib").join("libpython3.11.dylib"), "")
+        let libpython_name = if cfg!(target_os = "linux") {
+            "libpython3.11.so.1.0"
+        } else {
+            "libpython3.11.dylib"
+        };
+        fs::write(venv_root.join("lib").join(libpython_name), "")
             .expect("write libpython placeholder");
 
         assert!(bundled_python_runtime_complete(&venv_root));
@@ -930,7 +950,11 @@ mod tests {
         fs::write(
             dir.join(".bundle-venv")
                 .join("lib")
-                .join("libpython3.11.dylib"),
+                .join(if cfg!(target_os = "linux") {
+                    "libpython3.11.so.1.0"
+                } else {
+                    "libpython3.11.dylib"
+                }),
             "",
         )
         .expect("write libpython placeholder");

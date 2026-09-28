@@ -6,6 +6,8 @@ dist/
 build/
 .venv/
 .bundle-venv/*
+.bundle-venv.tmp/
+.bundle-build-venv/
 !.bundle-venv/.gitkeep
 venv/
 *.egg
