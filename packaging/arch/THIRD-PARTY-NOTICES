@@ -1,0 +1,7 @@
+Local Voice bundles a Python runtime and its installed dependencies under
+/usr/lib/local-voice/.bundle-venv. Their distribution metadata and license files
+are included alongside the installed packages in site-packages. Review those
+notices before redistribution. Optional Kokoro/Piper weights and the English
+spaCy model wheel are not part of this package; users acquire them explicitly.
+The Omarchy panel is installed under /usr/share/local-voice and is not enabled
+by package installation.

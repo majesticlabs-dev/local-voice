@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo 'Requires Linux x86_64' >&2; exit 1; }
+for tool in uv node cargo makepkg; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
+sandbox="$(mktemp -d)"
+trap 'rm -rf "$sandbox"' EXIT
+export TMPDIR="$sandbox/tmp" LV_CACHE_DIR="$sandbox/cache" LV_OUTPUT_DIR="$sandbox/output"
+export LV_MODELS_DIR="$sandbox/models" XDG_CACHE_HOME="$sandbox/xdg-cache" HF_HOME="$sandbox/hf"
+export PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT="$root/.bundle-build-venv"
+mkdir -p "$TMPDIR" "$LV_CACHE_DIR" "$LV_OUTPUT_DIR" "$LV_MODELS_DIR" "$XDG_CACHE_HOME" "$HF_HOME"
+cd "$root"
+python_bin="$(uv python find 3.12.12 --managed-python)"
+uv sync --locked --python "$python_bin" --managed-python --no-install-project --no-install-package en-core-web-sm --link-mode copy
+"$UV_PROJECT_ENVIRONMENT/bin/python" -m unittest discover -s tests -v
+node --test desktop/*.test.mjs extension/tests/*.test.mjs integrations/omarchy/*.test.mjs
+./build.sh --prepare-runtime-only
+cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
+export LOCAL_VOICE_SOURCE="$root"
+cd "$root/packaging/arch"
+makepkg --nodeps --force
+printf 'Package: %s\n' "$PWD"/*.pkg.tar.zst

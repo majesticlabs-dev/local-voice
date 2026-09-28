@@ -39,3 +39,8 @@ Thumbs.db
 .python-version
 
 .omx
+
+# Local Arch package build output
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.zst

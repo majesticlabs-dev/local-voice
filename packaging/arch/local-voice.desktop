@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Local Voice Desktop
+Comment=Private local text-to-speech
+Exec=local-voice-desktop
+Icon=local-voice
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
