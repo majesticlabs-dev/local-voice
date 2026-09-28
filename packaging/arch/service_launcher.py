@@ -5,11 +5,15 @@ import secrets
 import stat
 
 
-def prepare(home: Path, runtime: Path, cache: Path) -> Path:
+def asset_directories(home: Path, cache: Path) -> tuple[Path, Path, Path]:
+    """Shared paths for the service and read-only voice checks."""
     data = Path(os.environ.get("XDG_DATA_HOME", home / ".local/share")) / "dev.majesticlabs.localvoice"
-    models = data / "service-models"
-    output = data / "service-output"
-    cache_dir = cache / "dev.majesticlabs.localvoice/service-cache"
+    return data / "service-models", data / "service-output", cache / "dev.majesticlabs.localvoice/service-cache"
+
+
+def prepare(home: Path, runtime: Path, cache: Path) -> Path:
+    models, output, cache_dir = asset_directories(home, cache)
+    data = models.parent
     if data.is_symlink():
         raise RuntimeError("Refusing symlink data directory")
     data.mkdir(mode=0o700, parents=True, exist_ok=True)
