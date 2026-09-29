@@ -1187,7 +1187,7 @@ pub fn run() {
                 let state = app_handle.state::<ServiceManager>();
                 if let Ok(mut runtime) = state.0.lock() {
                     let _ = stop_service(&mut runtime);
-                }
+                };
             }
             app_handle.exit(0);
         }
