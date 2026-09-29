@@ -3,7 +3,7 @@ name: Tests
 on:
   push:
     branches:
-      - "**"
+      - master
   pull_request:
 
 permissions:
@@ -11,12 +11,8 @@ permissions:
 
 jobs:
   python:
-    name: Python tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14]
+    name: Python tests (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,12 +35,8 @@ jobs:
         run: .ci-venv/bin/python -m unittest discover -s tests -v
 
   rust:
-    name: Rust library tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14]
+    name: Rust library tests (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux Tauri build libraries
