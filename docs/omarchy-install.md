@@ -52,8 +52,6 @@ omarchy plugin enable local-voice.panel
 
 This adds one status icon. Left-click to read the clipboard when idle, stop the controller while it reads or plays, or start Local Voice after Quit. Right-click for **Read clipboard**, **Read selection**, **Stop**, **Open Local Voice**, and **Quit Local Voice** (or **Start Local Voice** when off). Quit stops the controller, closes the matching desktop window, and stops the user service. It does not disable login startup. Stop affects panel and shortcut playback, not Chrome or desktop playback. Clipboard or selection text is read only after an explicit action. The panel polls service and controller status, not clipboard contents.
 
-**Known issue in this package:** the widget's Open Local Voice action invokes `local-voice`, but the package installs `local-voice-desktop`, not `local-voice`. Open the app from the application menu or run `local-voice-desktop` until the widget command is fixed. The model setup hint in the panel does not itself open the app on this build.
-
 After an upgrade, copy the new plugin files to the same user directory and restart the shell, since the running shell can keep old QML in memory:
 
 ```sh
@@ -86,7 +84,7 @@ If you edited the managed block, removal refuses to delete it automatically.
 
 ## Chrome extension
 
-The Arch package does not include or install the extension. From this source checkout, open `chrome://extensions/` in Chrome, turn on **Developer mode**, select **Load unpacked**, and choose the `extension/` directory. The extension connects to `http://127.0.0.1:5517` and plays audio in Chrome. Keep the user service running to use it when the desktop app is closed. Set up a voice in the desktop app first.
+The Arch package does not include or install the extension. Load it unpacked from the source checkout's `extension/` directory: open `chrome://extensions/` in Chrome, turn on **Developer mode**, select **Load unpacked**, and choose that directory. The extension connects to `http://127.0.0.1:5517` and plays audio in Chrome. Keep the user service running to use it when the desktop app is closed. Set up a voice in the desktop app first.
 
 ## Upgrade, removal, and problems
 
@@ -96,7 +94,7 @@ For an upgrade, build the new package, then install it with `sudo pacman -U <new
 systemctl --user restart local-voice.service
 ```
 
-If an old controller process remains after the upgrade, stop playback and run `pkill -f 'clipboard_controller serve'`, then start playback again. Use the widget upgrade steps above for new QML.
+The controller checks the protocol version and replaces a controller from a previous package automatically. If replacement fails, see the fallback below. Use the widget upgrade steps above for new QML.
 
 Before uninstalling, preview and remove managed shortcuts while their command still exists, then stop and disable the user service, disable the plugin, and remove the package:
 
@@ -113,11 +111,10 @@ Remove `~/.config/omarchy/plugins/local-voice.panel/` yourself if it contains on
 
 | Problem | Check |
 | --- | --- |
-| **Playback error** after reading an image-only clipboard | `wl-paste --type text/plain` needs text. Copy text and try again. Use `local-voice-controller status` for the controller error. |
-| Playback still uses an old controller after upgrade | Stop playback, then run `pkill -f 'clipboard_controller serve'` and try again. |
+| Image-only clipboard shows **Clipboard has no text** | Copy text and try again. The controller requests `text/plain`, not images. |
+| Old controller remains after upgrade | Replacement is automatic via a protocol version check. If it fails, stop playback, run `pkill -f 'clipboard_controller serve'` as a fallback, then try again. |
 | Service down or port 5517 in use | Run `systemctl --user status local-voice.service` and inspect `journalctl --user -u local-voice.service`. Check for another process using the port; the service does not take it over. |
 | **Setup needed** | Open `local-voice-desktop`, choose **Models**, and confirm a language download. Health alone never downloads a model. |
-| Panel **Open Local Voice** does nothing | This package has a launcher-name mismatch. Run `local-voice-desktop` directly. |
 
 ## Maintainers
 
