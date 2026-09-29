@@ -11,6 +11,10 @@ Both use the same local TTS engine: [Kokoro](https://github.com/hexgrad/kokoro) 
 
 ## Install
 
+### Omarchy x86_64
+
+See the [Omarchy installation guide](docs/omarchy-install.md) for the local Arch package, service, model setup, panel widget, and shortcuts.
+
 ### Mac Desktop App
 
 1. Download the latest `.dmg` from [GitHub Releases](https://github.com/majesticlabs/local-voice/releases)

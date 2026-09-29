@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+root=/usr/lib/local-voice
+export PYTHONHOME="$root/.bundle-venv"
+export PYTHONNOUSERSITE=1 PYTHONPATH="$root"
+if [ "${1:-}" = verify ]; then
+  shift
+  exec "$root/.bundle-venv/bin/python" -m service.voice_probe --packaged "$@"
+fi
+exec "$root/.bundle-venv/bin/python" -m service.clipboard_controller "$@"

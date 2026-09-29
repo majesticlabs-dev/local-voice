@@ -1,6 +1,14 @@
+import importlib.util
+import os
+import subprocess
 import sys
+import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from service.providers import kokoro
@@ -28,22 +36,35 @@ class ConfigureEspeakBackendTest(unittest.TestCase):
             kokoro.Path("/tmp/espeakng_loader"),
         )
 
-    def test_prepare_espeak_data_root_stages_spacey_path(self):
-        with patch.object(
-            kokoro.tempfile, "gettempdir", return_value="/tmp/space-free"
-        ):
-            with patch.object(kokoro.shutil, "copytree") as copytree:
-                data_dir = kokoro.Path(
-                    "/tmp/Local Voice/espeakng_loader/espeak-ng-data"
-                )
-
-                with patch.object(kokoro.Path, "resolve", return_value=data_dir):
-                    with patch.object(kokoro.Path, "symlink_to") as symlink_to:
-                        staged_root = kokoro._prepare_espeak_data_root(data_dir)
-
-        self.assertEqual(staged_root, kokoro.Path("/tmp/space-free/local-voice-espeak"))
-        symlink_to.assert_called_once_with(data_dir, target_is_directory=True)
-        copytree.assert_not_called()
+    @unittest.skipUnless(importlib.util.find_spec("espeakng_loader"), "eSpeak runtime missing")
+    def test_long_runtime_path_initializes_real_english_espeak_fallback(self):
+        # Run in a child: the old path makes espeak-ng call exit(1), which must
+        # fail this test without killing the whole suite. No model weights needed.
+        code = """
+import espeakng_loader
+from phonemizer.backend.espeak.wrapper import EspeakWrapper
+from misaki.espeak import EspeakFallback
+from service.providers.kokoro import _prepare_espeak_data_root
+from pathlib import Path
+import os
+root = _prepare_espeak_data_root(Path(os.environ['ESPEAK_TEST_DATA']))
+EspeakWrapper.set_library(espeakng_loader.get_library_path())
+EspeakWrapper.set_data_path(str(root))
+fallback = EspeakFallback(british=False)
+assert fallback.backend.phonemize(['hello'])
+"""
+        with tempfile.TemporaryDirectory(prefix="lv-espeak-test-") as temp:
+            long_parent = Path(temp) / ("long-relocatable-package-path-" * 6)
+            long_parent.mkdir()
+            (long_parent / "espeak-ng-data").symlink_to(
+                Path(__import__("espeakng_loader").get_data_path()), target_is_directory=True
+            )
+            env = {**os.environ, "ESPEAK_TEST_DATA": str(long_parent / "espeak-ng-data")}
+            result = subprocess.run(
+                [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
+                env=env, capture_output=True, text=True, timeout=30, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_configures_wrapper_with_prepared_data_root(self):
         fake_loader = types.SimpleNamespace(
@@ -70,15 +91,38 @@ class ConfigureEspeakBackendTest(unittest.TestCase):
         self.assertEqual(FakeWrapper.data_path, "/tmp/espeakng_loader")
 
 
-class IsReadyTest(unittest.TestCase):
-    def test_is_ready_returns_false_when_load_raises_system_exit(self):
-        # A dependency (e.g. spaCy model resolution) may call sys.exit() on
-        # failure, raising SystemExit (a BaseException, not Exception). The
-        # provider must degrade to "not ready" rather than crash startup.
-        def boom():
-            raise SystemExit(1)
+class ConcurrentLoadTest(unittest.TestCase):
+    def test_espeak_copy_is_published_only_once_complete(self):
+        with tempfile.TemporaryDirectory(prefix="lv spaced ") as temp:
+            data = Path(temp) / "espeak-ng-data"
+            data.mkdir()
+            (data / "phontab").write_text("ready")
+            original = kokoro.shutil.copytree
+            def slow_copy(*args):
+                time.sleep(.05)
+                return original(*args)
+            with patch.object(kokoro, "_espeak_staging", None), patch.object(kokoro.shutil, "copytree", side_effect=slow_copy) as copy:
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    roots = list(pool.map(kokoro._prepare_espeak_data_root, [data] * 8))
+                self.assertEqual(copy.call_count, 1)
+                self.assertEqual(len(set(roots)), 1)
+                self.assertTrue((roots[0] / "espeak-ng-data/phontab").exists())
+                kokoro._espeak_staging.cleanup()
 
-        with patch.object(kokoro, "_load_kokoro", side_effect=boom):
+    def test_first_pipeline_created_once(self):
+        from unittest.mock import Mock
+        create = Mock(side_effect=lambda **kw: object())
+        fake = types.SimpleNamespace(KPipeline=create)
+        with patch.object(kokoro, "_kokoro", fake), patch.dict(sys.modules, {"kokoro": types.SimpleNamespace(KModel=lambda **kw: object())}), patch.object(kokoro, "_pipelines", {}):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                pipelines = list(pool.map(kokoro._load_kokoro, ["e"] * 8))
+            self.assertTrue(all(p is pipelines[0] for p in pipelines))
+            self.assertEqual(create.call_count, 1)
+
+
+class IsReadyTest(unittest.TestCase):
+    def test_readiness_does_not_enter_transitive_loader(self):
+        with patch.object(kokoro, "_load_kokoro", side_effect=AssertionError("loaded")):
             self.assertFalse(kokoro.KokoroProvider().is_ready())
 
 

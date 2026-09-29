@@ -1,4 +1,8 @@
 import { stripMarkdown } from './markdown.js';
+import { healthBlockers } from './health.js';
+import { createSetupGuide, noVerifiedVoice } from './setup-guide.js';
+import { createErrorPresenter, serviceFetch } from './errors.js';
+import { createModelManager, createNativeModelRequest } from './model-manager.js';
 
 const SETTINGS_KEY = 'local-voice-desktop-settings';
 const DEFAULT_SETTINGS = {
@@ -25,6 +29,7 @@ const state = {
   ffmpegPath: '',
   healthPhase: 'starting',
   healthReady: false,
+  healthSetupNeeded: false,
   healthText: 'Starting service…',
   settingsOpen: false,
   startupError: '',
@@ -41,6 +46,8 @@ const state = {
   cancelPlayback: null,
   lastSpeak: null,
   voicesLoaded: false,
+  modelCatalog: null,
+  modelsChecked: false,
   track: null,
   estimatedDuration: 0,
 };
@@ -66,6 +73,8 @@ const els = {
   resetText: document.querySelector('#reset-text'),
   restartButton: document.querySelector('#restart-button'),
   settingsButton: document.querySelector('#settings-button'),
+  setupCallout: document.querySelector('#setup-callout'),
+  setupVoicesButton: document.querySelector('#setup-voices-button'),
   settingsClose: document.querySelector('#settings-close'),
   settingsOverlay: document.querySelector('#settings-overlay'),
   serverMode: document.querySelector('#server-mode'),
@@ -80,6 +89,9 @@ const els = {
   timeText: document.querySelector('#time-text'),
   uploadTrigger: document.querySelector('#upload-trigger'),
   voiceSelect: document.querySelector('#voice-select'),
+  modelsButton: document.querySelector('#models-button'),
+  modelsClose: document.querySelector('#models-close'),
+  modelsOverlay: document.querySelector('#models-overlay'),
   forwardButton: document.querySelector('#forward-button'),
 };
 
@@ -132,9 +144,15 @@ function closeSettings() {
   render();
 }
 
+const errorPresenter = createErrorPresenter(messageDialog, (message) => {
+  state.startupErrorTitle = 'Service unavailable';
+  state.startupError = message;
+  render();
+});
+
 function showError(message) {
   setStatus('Error');
-  return messageDialog(message, { title: 'Local Voice Desktop', kind: 'error' });
+  return errorPresenter.show(message, { title: 'Local Voice Desktop', kind: 'error' });
 }
 
 function extractErrorDetail(payload) {
@@ -189,10 +207,17 @@ function dependencyErrorMessage(dependencies = []) {
 }
 
 function applyHealthState(health) {
-  const dependencies = Array.isArray(health?.dependencies) ? health.dependencies : [];
-  const blocking = blockingDependencies(dependencies);
+  const blocking = healthBlockers(health);
 
-  state.healthReady = Boolean(health?.ready) && blocking.length === 0;
+  state.healthSetupNeeded = health?.status === 'setup_needed' && !blocking.length;
+  state.healthReady = (Boolean(health?.ready) || state.healthSetupNeeded) && blocking.length === 0;
+
+  if (state.healthSetupNeeded) {
+    state.healthPhase = 'ready';
+    state.healthText = 'Service running, model setup needed';
+    state.startupError = '';
+    return;
+  }
 
   if (blocking.length) {
     const missingBinary = blocking.some((dependency) => dependency.name === 'ffmpeg');
@@ -223,7 +248,9 @@ async function maybeNotifyStartupIssue() {
   }
 
   state.startupIssueNotice = noticeKey;
-  await messageDialog(state.startupError, {
+  // Keep the inline card usable when a native GTK dialog cannot take focus.
+  if (state.serviceInfo?.sharedService) return;
+  await errorPresenter.show(state.startupError, {
     title: `${state.startupErrorTitle} · Local Voice Desktop`,
     kind: 'error',
   });
@@ -286,11 +313,14 @@ function render() {
 
   const hasText = currentPreparedText().length > 0;
   els.resetText.hidden = !hasText;
+  const voiceAvailable = !state.modelCatalog ? !state.healthSetupNeeded : state.modelCatalog.languages.some((language) =>
+    language.voices.some((voice) => voice.id === els.voiceSelect.value && voice.installed));
+  els.setupCallout.hidden = !state.healthSetupNeeded || !noVerifiedVoice(state.modelCatalog);
   els.speakButton.disabled = !state.healthReady || !hasText || state.loading;
   els.pauseButton.disabled = !(state.playing || state.paused);
   els.pauseButton.textContent = state.paused ? 'Resume' : 'Pause';
   els.stopButton.disabled = !(state.playing || state.paused || state.loading);
-  els.downloadButton.disabled = !hasText || state.loading;
+  els.downloadButton.disabled = !hasText || !voiceAvailable || state.loading;
   const hasTrack = Boolean(state.track?.items?.length);
   els.restartButton.disabled = !hasTrack || state.loading;
   els.backwardButton.disabled = !hasTrack || state.loading;
@@ -383,7 +413,7 @@ function sleep(ms) {
 }
 
 async function fetchJson(path, options = {}) {
-  const response = await fetch(`${apiBase()}${path}`, options);
+  const response = await serviceFetch(fetch, `${apiBase()}${path}`, options);
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
@@ -391,7 +421,7 @@ async function fetchJson(path, options = {}) {
 }
 
 async function fetchBlob(path, options = {}) {
-  const response = await fetch(`${apiBase()}${path}`, options);
+  const response = await serviceFetch(fetch, `${apiBase()}${path}`, options);
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
@@ -400,7 +430,7 @@ async function fetchBlob(path, options = {}) {
 
 async function fetchChunkBlob(path) {
   for (let attempt = 0; attempt < 240; attempt += 1) {
-    const response = await fetch(`${apiBase()}${path}`);
+    const response = await serviceFetch(fetch, `${apiBase()}${path}`);
     if (response.ok) {
       return response.blob();
     }
@@ -418,8 +448,12 @@ async function healthPoll() {
   try {
     const health = await fetchJson('/health');
     applyHealthState(health);
-    if (state.healthReady && !state.voicesLoaded) {
-      await loadVoices();
+    if (!state.voicesLoaded) {
+      try {
+        await loadVoices();
+      } catch (_) {
+        // Voice listing is separate from service health.
+      }
     }
   } catch (_) {
     try {
@@ -428,6 +462,7 @@ async function healthPoll() {
       }
     } catch (_) {}
     state.healthReady = false;
+    state.healthSetupNeeded = false;
     if (state.serviceInfo?.lastError) {
       state.healthPhase = 'error';
       state.healthText = 'Service failed';
@@ -446,6 +481,8 @@ async function healthPoll() {
     }
   } finally {
     render();
+    setupGuide.promptOnce({ setupNeeded: state.healthSetupNeeded, modelsChecked: state.modelsChecked,
+      catalog: state.modelCatalog });
     await maybeNotifyStartupIssue();
   }
 }
@@ -481,12 +518,16 @@ async function loadVoices() {
   for (const voice of payload.voices) {
     const option = document.createElement('option');
     option.value = voice.id;
-    option.textContent = `${voice.label} (${voice.id})`;
+    const installed = state.modelCatalog?.languages.some((language) =>
+      language.voices.some((item) => item.id === voice.id && item.installed));
+    option.disabled = Boolean(state.modelCatalog) && !installed;
+    option.textContent = `${voice.label} (${voice.id})${state.modelCatalog && !installed ? ' (setup needed)' : ''}`;
     els.voiceSelect.append(option);
   }
-  els.voiceSelect.value = payload.voices.some((voice) => voice.id === selected)
+  const usable = [...els.voiceSelect.options].filter((option) => !option.disabled);
+  els.voiceSelect.value = usable.some((option) => option.value === selected)
     ? selected
-    : payload.voices[0]?.id ?? DEFAULT_SETTINGS.voice;
+    : usable[0]?.value ?? '';
   state.voicesLoaded = true;
   saveSettings();
 }
@@ -576,7 +617,10 @@ async function playBlob(blob, token, { index = 0, startTime = 0 } = {}) {
         cleanupCurrentAudioUrl();
       }
       if (result === 'error') {
-        reject(new Error('Audio playback failed.'));
+        const guidance = /Linux/i.test(navigator.userAgent)
+          ? ' Check that WebKitGTK and the GStreamer MP3 decoder plugins are installed. FFmpeg encodes MP3 but does not decode it in the desktop player.'
+          : '';
+        reject(new Error(`Audio playback failed.${guidance}`));
       } else {
         resolve(result);
       }
@@ -719,6 +763,9 @@ async function handleSpeak() {
   const text = currentPreparedText();
   if (!text) {
     await showError('There is no readable text to synthesize.');
+    return;
+  }
+  if (!await setupGuide.requireVoice({ setupNeeded: state.healthSetupNeeded, catalog: state.modelCatalog })) {
     return;
   }
 
@@ -941,6 +988,26 @@ function bindFileDrop() {
   });
 }
 
+function openModels({ refresh = true } = {}) {
+  els.modelsOverlay.hidden = false;
+  if (refresh) modelManager.refresh();
+}
+
+const setupGuide = createSetupGuide((refresh) => openModels({ refresh }), showError);
+const modelRequest = createNativeModelRequest(invoke);
+
+const modelManager = createModelManager({
+  root: document.querySelector('#models-overlay'),
+  request: modelRequest,
+  confirm: confirmDialog,
+  storage: localStorage,
+  onCatalog(catalog) {
+    state.modelCatalog = catalog;
+    if (state.voicesLoaded) loadVoices().catch(() => {});
+    render();
+  },
+});
+
 async function init() {
   if (tauriApi.app?.getVersion) {
     tauriApi.app.getVersion().then((v) => {
@@ -969,6 +1036,12 @@ async function init() {
     syncRateLabel();
     saveSettings();
   });
+  els.modelsButton.addEventListener('click', () => openModels());
+  els.setupVoicesButton.addEventListener('click', () => openModels());
+  els.modelsClose.addEventListener('click', () => { els.modelsOverlay.hidden = true; });
+  els.modelsOverlay.addEventListener('click', (event) => {
+    if (event.target === els.modelsOverlay) els.modelsOverlay.hidden = true;
+  });
   els.settingsButton.addEventListener('click', openSettings);
   els.settingsClose.addEventListener('click', closeSettings);
   els.settingsOverlay.addEventListener('click', (event) => {
@@ -995,15 +1068,21 @@ async function init() {
   });
   els.textInput.addEventListener('input', render);
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && state.settingsOpen) {
-      closeSettings();
-    }
+    if (event.key === 'Escape' && !els.modelsOverlay.hidden) els.modelsOverlay.hidden = true;
+    if (event.key === 'Escape' && state.settingsOpen) closeSettings();
   });
 
   try {
     await loadDesktopSettings();
     await loadServiceState();
-    if (settings.serverMode && !state.serviceInfo?.serverMode) {
+    if (state.serviceInfo?.sharedService) {
+      els.serverMode.checked = false;
+      els.serverMode.disabled = true;
+      els.serverMode.title = 'The shared Linux service is loopback-only. LAN server mode is unavailable.';
+      els.ffmpegPath.disabled = true;
+      els.ffmpegPath.title = 'Set LV_FFMPEG_PATH in the systemd user-service override and restart the unit.';
+    }
+    if (!state.serviceInfo?.sharedService && settings.serverMode && !state.serviceInfo?.serverMode) {
       state.serviceInfo = await invoke('toggle_server_mode', { enable: true });
     }
   } catch (error) {
@@ -1011,10 +1090,15 @@ async function init() {
   }
 
   await healthPoll();
+  await modelManager.refresh();
+  state.modelsChecked = true;
+  setupGuide.promptOnce({ setupNeeded: state.healthSetupNeeded, modelsChecked: state.modelsChecked,
+    catalog: state.modelCatalog });
   syncTimeLabel();
   setInterval(() => {
     healthPoll().catch(() => {});
   }, 3000);
+  setInterval(() => modelManager.poll(), 1000);
   render();
 }
 

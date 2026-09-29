@@ -278,12 +278,61 @@ textarea {
   font-size: 0.92rem;
 }
 
+.settings-dialog.model-dialog {
+  max-height: min(90vh, 850px);
+  overflow: auto;
+}
+
+.model-choices {
+  display: grid;
+  gap: 10px;
+}
+
+.model-choices label {
+  display: block;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.model-choices input {
+  margin-right: 8px;
+}
+
+.model-choices span {
+  color: var(--muted);
+}
+
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+#model-message, #model-progress {
+  overflow-wrap: anywhere;
+}
+
 .file-badge {
   margin: 10px 0 0;
   padding: 8px 10px;
   border-radius: 14px;
   background: rgba(31, 42, 47, 0.05);
   font-size: 0.95rem;
+}
+
+.setup-callout {
+  margin: 10px 0;
+  padding: 16px;
+  border: 1px solid rgba(159, 60, 22, 0.25);
+  border-radius: 18px;
+  background: var(--panel-strong);
+}
+
+.setup-callout p {
+  margin: 0 0 12px;
+  line-height: 1.5;
 }
 
 .startup-error-card {

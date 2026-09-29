@@ -7,6 +7,8 @@ const $ = (s) => document.querySelector(s);
 let settings;
 let api;
 let serviceReady = false;
+let selectedVoiceAvailable = true;
+let setupNeeded = false;
 let currentJob = {
   status: JOB_STATUS.IDLE,
   chunksTotal: 0,
@@ -15,7 +17,7 @@ let currentJob = {
 };
 
 function blockingDependencies(dependencies = []) {
-  return dependencies.filter((dependency) => dependency?.required && !dependency?.available);
+  return dependencies.filter((dependency) => dependency?.required && !dependency?.available && dependency.name === 'ffmpeg');
 }
 
 function syncTransportButtons() {
@@ -25,7 +27,7 @@ function syncTransportButtons() {
   const active = [JOB_STATUS.SYNTHESIZING, JOB_STATUS.PLAYING, JOB_STATUS.PAUSED].includes(currentJob.status);
 
   btnSpeak.style.display = active ? 'none' : 'flex';
-  btnSpeak.disabled = !serviceReady;
+  btnSpeak.disabled = !serviceReady || !selectedVoiceAvailable;
   btnPause.disabled = !active;
   btnStop.disabled = !active;
 }
@@ -40,15 +42,11 @@ async function init() {
 
   $('#version').textContent = `v${chrome.runtime.getManifest().version}`;
 
-  checkHealth()
-    .then((ready) => {
-      if (ready) return loadVoices();
-      $('#voice-select').innerHTML = '<option value="">Open app first</option>';
-      return null;
-    })
-    .catch(() => {
-      $('#voice-select').innerHTML = '<option value="">Open app first</option>';
-    });
+  checkHealth().then((ready) => {
+    if (ready) return loadVoices();
+    $('#voice-select').innerHTML = '<option value="">Service unavailable</option>';
+    return null;
+  });
 
   chrome.runtime.sendMessage({ type: MSG.GET_STATE }, (res) => {
     if (chrome.runtime.lastError) return;
@@ -63,20 +61,25 @@ async function checkHealth() {
     const data = await api.health();
     const engineLabel = data.engine || 'Local Voice';
     const blocking = blockingDependencies(data.dependencies);
-    serviceReady = Boolean(data.ready) && blocking.length === 0;
+    setupNeeded = data.status === 'setup_needed' && blocking.length === 0;
+    serviceReady = (Boolean(data.ready) || setupNeeded) && blocking.length === 0;
     if (blocking.length) {
       dot.className = 'health-dot error';
       label.textContent = blocking[0].name === 'ffmpeg' ? 'ffmpeg missing' : 'Service issue';
       label.title = blocking[0].detail || '';
     } else {
-      dot.className = serviceReady ? 'health-dot ok' : 'health-dot unknown';
-      label.textContent = serviceReady ? engineLabel : `${engineLabel} warming`;
-      label.title = '';
+      dot.className = data.status === 'setup_needed' ? 'health-dot unknown' : serviceReady ? 'health-dot ok' : 'health-dot error';
+      label.textContent = data.status === 'setup_needed' ? 'Model setup needed' : serviceReady ? engineLabel : 'Service unavailable';
+      label.title = data.status === 'setup_needed' ? 'Open Model Manager in the Local Voice desktop app to download a language.' : '';
+      if (data.status === 'setup_needed' && currentJob.status === JOB_STATUS.IDLE) {
+        $('#status-text').textContent = 'Open desktop Model Manager to download a language';
+      }
     }
   } catch (_) {
     serviceReady = false;
+    setupNeeded = false;
     dot.className = 'health-dot error';
-    label.textContent = 'Open app';
+    label.textContent = 'Service unavailable';
     label.title = '';
   }
   syncTransportButtons();
@@ -91,12 +94,28 @@ async function loadVoices() {
     for (const v of data.voices) {
       const opt = document.createElement('option');
       opt.value = v.id;
-      opt.textContent = v.label;
+      opt.disabled = v.available === false;
+      opt.textContent = v.available === false ? `${v.label} (not installed)` : v.label;
+      select.appendChild(opt);
+    }
+    const selected = data.voices.find((v) => v.id === settings.voice);
+    if (!selected) {
+      const opt = document.createElement('option');
+      opt.value = settings.voice;
+      opt.disabled = true;
+      opt.textContent = `${settings.voice} (unavailable)`;
       select.appendChild(opt);
     }
     select.value = settings.voice;
+    selectedVoiceAvailable = Boolean(selected) && selected.available !== false;
+    if (!selectedVoiceAvailable && currentJob.status === JOB_STATUS.IDLE) {
+      $('#status-text').textContent = 'Open desktop Model Manager to download this voice';
+    }
+    syncTransportButtons();
   } catch (_) {
-    select.innerHTML = '<option value="">Open app first</option>';
+    select.innerHTML = '<option value="">Voices unavailable</option>';
+    selectedVoiceAvailable = false;
+    syncTransportButtons();
   }
 }
 
@@ -118,7 +137,11 @@ function updateUI(job) {
     [JOB_STATUS.ERROR]: job.errorMessage || 'No readable text found',
   };
 
-  statusText.textContent = labels[job.status] || 'Ready';
+  statusText.textContent = job.status === JOB_STATUS.IDLE && !selectedVoiceAvailable
+    ? 'Open desktop Model Manager to download this voice'
+    : job.status === JOB_STATUS.IDLE && setupNeeded
+      ? 'Open desktop Model Manager to download a language'
+      : labels[job.status] || 'Ready';
   statusText.title = job.errorMessage || '';
   statusText.className = '';
   if ([JOB_STATUS.SYNTHESIZING, JOB_STATUS.PLAYING].includes(job.status)) {
@@ -151,10 +174,7 @@ function updateUI(job) {
 $('#btn-speak').addEventListener('click', async () => {
   const ready = await checkHealth();
   if (!ready) {
-    const healthLabel = $('#health-label').textContent || 'Open app';
-    $('#status-text').textContent = /warming/i.test(healthLabel)
-      ? 'Local Voice is warming up'
-      : 'Open Local Voice app';
+    $('#status-text').textContent = $('#health-label').textContent || 'Service unavailable';
     $('#status-text').className = 'error';
     return;
   }
@@ -185,7 +205,10 @@ $('#btn-stop').addEventListener('click', () => {
 });
 
 $('#voice-select').addEventListener('change', async (e) => {
+  if (!e.target.value || e.target.selectedOptions[0]?.disabled) return;
   settings = await setSetting('voice', e.target.value);
+  selectedVoiceAvailable = true;
+  syncTransportButtons();
 });
 
 $('#rate-slider').addEventListener('input', async (e) => {

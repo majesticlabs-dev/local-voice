@@ -1,0 +1,55 @@
+# Local build recipe. Run scripts/check-and-package from the source checkout.
+pkgname=local-voice
+pkgver=1.2.0
+pkgrel=1
+pkgdesc='Local Voice desktop, shared TTS service, and Omarchy controls'
+arch=('x86_64')
+url='https://github.com/majesticlabs/local-voice'
+license=('MIT')
+depends=('ffmpeg' 'webkit2gtk-4.1' 'gtk3' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'wl-clipboard' 'systemd')
+makedepends=('rust' 'nodejs' 'npm' 'uv' 'pkgconf' 'base-devel')
+source=()
+sha256sums=()
+options=('!debug' '!strip')
+
+# LOCAL_VOICE_SOURCE is intentionally explicit: the source checkout is a build
+# input, not an end-user runtime dependency. No package hook changes user config.
+_source_root="${LOCAL_VOICE_SOURCE:?Run scripts/check-and-package from the source checkout}"
+
+build() {
+  cd "$_source_root"
+  ./build.sh --bundles deb
+}
+
+package() {
+  local root="$_source_root"
+  local desktop="$root/src-tauri/target/release/local-voice-desktop"
+  test -x "$desktop" || { echo "Missing Tauri release binary: $desktop" >&2; return 1; }
+  install -Dm755 "$desktop" "$pkgdir/usr/bin/local-voice-desktop"
+  install -Dm644 "$root/src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/local-voice.png"
+  install -Dm644 "$root/packaging/arch/local-voice.desktop" "$pkgdir/usr/share/applications/local-voice.desktop"
+  install -Dm644 "$root/packaging/arch/local-voice.service" "$pkgdir/usr/lib/systemd/user/local-voice.service"
+  install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$root/packaging/arch/THIRD-PARTY-NOTICES" "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES"
+
+  local dest="$pkgdir/usr/lib/local-voice"
+  install -dm755 "$dest"
+  cp -a "$root/.bundle-venv" "$dest/.bundle-venv"
+  cp -a "$root/service" "$dest/service"
+  install -Dm644 "$root/config.yml" "$dest/config.yml"
+  install -Dm644 "$root/packaging/arch/service_launcher.py" "$dest/service_launcher.py"
+  install -Dm755 "$root/packaging/arch/start-service" "$dest/start-service"
+  install -Dm755 "$root/packaging/arch/local-voice-controller" "$pkgdir/usr/bin/local-voice-controller"
+  install -Dm755 "$root/integrations/omarchy/local-voice-integration" "$pkgdir/usr/bin/local-voice-integration"
+  install -dm755 "$pkgdir/usr/share/local-voice"
+  cp -a "$root/integrations/omarchy/local-voice.panel" "$pkgdir/usr/share/local-voice/local-voice.panel"
+  # Tauri resources use _up_ for paths declared relative to src-tauri.
+  install -dm755 "$pkgdir/usr/lib/local-voice-desktop/_up_"
+  ln -s /usr/lib/local-voice/.bundle-venv "$pkgdir/usr/lib/local-voice-desktop/_up_/.bundle-venv"
+  ln -s /usr/lib/local-voice/service "$pkgdir/usr/lib/local-voice-desktop/_up_/service"
+  install -Dm644 "$root/config.yml" "$pkgdir/usr/lib/local-voice-desktop/_up_/config.yml"
+  install -Dm644 "$root/pyproject.toml" "$pkgdir/usr/lib/local-voice-desktop/_up_/pyproject.toml"
+  install -Dm644 "$root/uv.lock" "$pkgdir/usr/lib/local-voice-desktop/_up_/uv.lock"
+  # The Linux desktop uses the shared user unit; resource links avoid a second runtime copy.
+  find "$pkgdir" -type d -name __pycache__ -prune -exec rm -rf {} +
+}

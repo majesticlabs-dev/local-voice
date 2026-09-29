@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "local-voice.panel",
+  "name": "Local Voice",
+  "version": "1.0.0",
+  "author": "Local Voice",
+  "description": "Clipboard speech status and controls",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Local Voice",
+    "description": "Read clipboard, stop playback, and open the desktop model manager",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

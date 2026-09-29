@@ -12,6 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, State};
+#[cfg(target_os = "linux")]
+mod linux_service;
 
 #[derive(Default)]
 struct ServiceRuntime {
@@ -124,17 +126,29 @@ struct ServiceInfo {
     server_mode: bool,
     lan_url: Option<String>,
     last_error: Option<String>,
+    shared_service: bool,
 }
 
 #[tauri::command]
-fn get_service_state(
+async fn get_service_state(
     state: State<'_, ServiceManager>,
     config: State<'_, AppConfigState>,
 ) -> Result<ServiceInfo, String> {
+    #[cfg(target_os = "linux")]
+    let port = config.0.service.port;
+    #[cfg(target_os = "linux")]
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut probe = ServiceRuntime::default();
+        linux_service::refresh(&mut probe, port)?;
+        Ok::<_, String>(probe.last_error)
+    }).await.map_err(|e| e.to_string())??;
     let mut runtime = state
         .0
         .lock()
         .map_err(|_| "Service state lock poisoned".to_string())?;
+    #[cfg(target_os = "linux")]
+    { runtime.last_error = result; }
+    #[cfg(not(target_os = "linux"))]
     refresh_service_runtime(&mut runtime)?;
     Ok(service_info(&runtime, &config.0))
 }
@@ -156,27 +170,38 @@ fn toggle_server_mode(
     settings: State<'_, AppSettingsState>,
     enable: bool,
 ) -> Result<ServiceInfo, String> {
-    let mut runtime = state
-        .0
-        .lock()
-        .map_err(|_| "Service state lock poisoned".to_string())?;
-    if runtime.server_mode == enable {
-        return Ok(service_info(&runtime, &config.0));
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (&app, &state, &config, &settings, enable);
+        Err(
+            "LAN server mode is unavailable with the shared Linux service. It stays on loopback."
+                .into(),
+        )
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut runtime = state
+            .0
+            .lock()
+            .map_err(|_| "Service state lock poisoned".to_string())?;
+        if runtime.server_mode == enable {
+            return Ok(service_info(&runtime, &config.0));
+        }
 
-    let previous_mode = runtime.server_mode;
-    runtime.server_mode = enable;
-    let desktop_settings = settings
-        .0
-        .lock()
-        .map(|settings| settings.clone())
-        .map_err(|_| "Desktop settings lock poisoned".to_string())?;
-    match restart_service(&app, &config.0, &desktop_settings, &mut runtime) {
-        Ok(info) => Ok(info),
-        Err(err) => {
-            runtime.server_mode = previous_mode;
-            let _ = restart_service(&app, &config.0, &desktop_settings, &mut runtime);
-            Err(err)
+        let previous_mode = runtime.server_mode;
+        runtime.server_mode = enable;
+        let desktop_settings = settings
+            .0
+            .lock()
+            .map(|settings| settings.clone())
+            .map_err(|_| "Desktop settings lock poisoned".to_string())?;
+        match restart_service(&app, &config.0, &desktop_settings, &mut runtime) {
+            Ok(info) => Ok(info),
+            Err(err) => {
+                runtime.server_mode = previous_mode;
+                let _ = restart_service(&app, &config.0, &desktop_settings, &mut runtime);
+                Err(err)
+            }
         }
     }
 }
@@ -189,26 +214,51 @@ fn set_ffmpeg_path(
     settings: State<'_, AppSettingsState>,
     path: Option<String>,
 ) -> Result<ServiceInfo, String> {
-    let normalized = resolve_desktop_ffmpeg_path(path);
-    let desktop_settings = {
-        let mut settings = settings
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (&app, &state, &config, &settings, &path);
+        Err("FFmpeg is managed by the shared Linux service. Set LV_FFMPEG_PATH in its user-service override, then restart the unit.".into())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let normalized = resolve_desktop_ffmpeg_path(path);
+        let desktop_settings = {
+            let mut settings = settings
+                .0
+                .lock()
+                .map_err(|_| "Desktop settings lock poisoned".to_string())?;
+            if settings.ffmpeg_path == normalized {
+                settings.clone()
+            } else {
+                settings.ffmpeg_path = normalized;
+                save_desktop_settings(&app, &settings)?;
+                settings.clone()
+            }
+        };
+
+        let mut runtime = state
             .0
             .lock()
-            .map_err(|_| "Desktop settings lock poisoned".to_string())?;
-        if settings.ffmpeg_path == normalized {
-            settings.clone()
-        } else {
-            settings.ffmpeg_path = normalized;
-            save_desktop_settings(&app, &settings)?;
-            settings.clone()
-        }
-    };
+            .map_err(|_| "Service state lock poisoned".to_string())?;
+        restart_service(&app, &config.0, &desktop_settings, &mut runtime)
+    }
+}
 
-    let mut runtime = state
-        .0
-        .lock()
-        .map_err(|_| "Service state lock poisoned".to_string())?;
-    restart_service(&app, &config.0, &desktop_settings, &mut runtime)
+#[tauri::command]
+fn manage_models(
+    app: AppHandle,
+    action: String,
+    job_id: Option<String>,
+    languages: Option<Vec<String>>,
+    candidates: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    return linux_service::manage_models(&app, &action, job_id.as_deref(), languages, candidates);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, action, job_id, languages, candidates);
+        Err("Model management is not configured for this platform.".into())
+    }
 }
 
 #[tauri::command]
@@ -231,7 +281,11 @@ fn service_info(runtime: &ServiceRuntime, config: &AppConfig) -> ServiceInfo {
         loopback_url,
         port: config.service.port,
         chunk_threshold: config.desktop.chunk_threshold,
-        service_running: runtime.child.is_some(),
+        service_running: if cfg!(target_os = "linux") {
+            runtime.last_error.is_none()
+        } else {
+            runtime.child.is_some()
+        },
         server_mode: runtime.server_mode,
         lan_url: if runtime.server_mode {
             detect_lan_url(config.service.port)
@@ -239,6 +293,7 @@ fn service_info(runtime: &ServiceRuntime, config: &AppConfig) -> ServiceInfo {
             None
         },
         last_error: runtime.last_error.clone(),
+        shared_service: cfg!(target_os = "linux"),
     }
 }
 
@@ -465,7 +520,14 @@ fn bundled_python_runtime_complete(venv_root: &Path) -> bool {
         entry
             .file_name()
             .to_str()
-            .map(|name| name.starts_with("libpython") && name.ends_with(".dylib"))
+            .map(|name| {
+                name.starts_with("libpython")
+                    && (if cfg!(target_os = "linux") {
+                        name.contains(".so")
+                    } else {
+                        name.ends_with(".dylib")
+                    })
+            })
             .unwrap_or(false)
     });
 
@@ -541,7 +603,10 @@ fn save_desktop_settings(app: &AppHandle, settings: &DesktopSettings) -> Result<
         .map_err(|err| format!("Failed to write {}: {err}", settings_path.display()))
 }
 
-fn hydrate_desktop_settings(app: &AppHandle, settings: DesktopSettings) -> Result<DesktopSettings, String> {
+fn hydrate_desktop_settings(
+    app: &AppHandle,
+    settings: DesktopSettings,
+) -> Result<DesktopSettings, String> {
     let hydrated = DesktopSettings {
         ffmpeg_path: resolve_desktop_ffmpeg_path(settings.ffmpeg_path.clone()),
     };
@@ -675,8 +740,16 @@ fn build_service_command(
             if !cfg!(debug_assertions) {
                 command
                     .env("PYTHONHOME", &runtime_root)
-                    .env("PYTHONPATH", bundled_pythonpath(&runtime_root)?)
                     .env("PYTHONNOUSERSITE", "1");
+                // The Linux standalone interpreter finds its standard library and
+                // site-packages relative to PYTHONHOME. Retain macOS's existing path.
+                if cfg!(target_os = "linux") {
+                    command
+                        .env_remove("PYTHONPATH")
+                        .env("PYTHONDONTWRITEBYTECODE", "1");
+                } else {
+                    command.env("PYTHONPATH", bundled_pythonpath(&runtime_root)?);
+                }
             }
             command.arg("-m").arg("uvicorn");
             command
@@ -891,7 +964,12 @@ mod tests {
 
         assert!(!bundled_python_runtime_complete(&venv_root));
 
-        fs::write(venv_root.join("lib").join("libpython3.11.dylib"), "")
+        let libpython_name = if cfg!(target_os = "linux") {
+            "libpython3.11.so.1.0"
+        } else {
+            "libpython3.11.dylib"
+        };
+        fs::write(venv_root.join("lib").join(libpython_name), "")
             .expect("write libpython placeholder");
 
         assert!(bundled_python_runtime_complete(&venv_root));
@@ -930,7 +1008,11 @@ mod tests {
         fs::write(
             dir.join(".bundle-venv")
                 .join("lib")
-                .join("libpython3.11.dylib"),
+                .join(if cfg!(target_os = "linux") {
+                    "libpython3.11.so.1.0"
+                } else {
+                    "libpython3.11.dylib"
+                }),
             "",
         )
         .expect("write libpython placeholder");
@@ -1065,12 +1147,19 @@ pub fn run() {
                     .map(|settings| settings.clone())
                     .map_err(|_| "Desktop settings lock poisoned".to_string())?;
                 let mut runtime = state.0.lock().map_err(|_| "Service state lock poisoned")?;
-                if let Err(err) = restart_service(
+                #[cfg(target_os = "linux")]
+                let start_result = linux_service::start(config.0.service.port, &mut runtime);
+                #[cfg(not(target_os = "linux"))]
+                let start_result = restart_service(
                     &app.handle().clone(),
                     &config.0,
                     &desktop_settings,
                     &mut runtime,
-                ) {
+                )
+                .map(|_| ());
+                #[cfg(target_os = "linux")]
+                let _ = desktop_settings;
+                if let Err(err) = start_result {
                     runtime.last_error = Some(err);
                 }
             }
@@ -1082,7 +1171,8 @@ pub fn run() {
             get_desktop_settings,
             set_ffmpeg_path,
             toggle_server_mode,
-            write_audio_file
+            write_audio_file,
+            manage_models
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -1092,12 +1182,16 @@ pub fn run() {
             event: tauri::WindowEvent::CloseRequested { .. },
             ..
         } => {
-            let state = app_handle.state::<ServiceManager>();
-            if let Ok(mut runtime) = state.0.lock() {
-                let _ = stop_service(&mut runtime);
+            #[cfg(not(target_os = "linux"))]
+            {
+                let state = app_handle.state::<ServiceManager>();
+                if let Ok(mut runtime) = state.0.lock() {
+                    let _ = stop_service(&mut runtime);
+                };
             }
             app_handle.exit(0);
         }
+        #[cfg(not(target_os = "linux"))]
         tauri::RunEvent::Exit => {
             let state = app_handle.state::<ServiceManager>();
             let mut runtime = match state.0.lock() {

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.0] - 2026-09-28
+
+### Added
+- Installable Omarchy x86_64 desktop package with a shared systemd user service, compact bar widget, clipboard/selection controls, reversible shortcuts, and Chrome extension support.
+- Explicit English, Spanish, and Russian Dmitri model selection with verified downloads, progress, cancellation, removal, and offline local inference.
+
+### Changed
+- Report health from installed languages, without treating an uninstalled optional engine as a startup blocker.
+- Preserve the macOS desktop service path while the Linux app uses the shared service.
+
 ## [1.1.1] - 2026-09-20
 
 ### Fixed

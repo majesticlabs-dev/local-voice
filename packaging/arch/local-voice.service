@@ -1,0 +1,14 @@
+[Unit]
+Description=Local Voice shared TTS backend
+Documentation=man:systemd.service(5)
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/local-voice/start-service
+Restart=on-failure
+RestartSec=3
+
+# Package installation must not enable this unit. Login startup is explicit opt-in.
+# No lingering is configured. The user manager stops the unit on logout.
+[Install]
+WantedBy=default.target

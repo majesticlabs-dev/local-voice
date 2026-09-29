@@ -26,6 +26,7 @@
             <span id="health-text">Starting service…</span>
           </div>
 
+          <button class="settings-trigger" id="models-button" type="button">Models</button>
           <button aria-haspopup="dialog" class="settings-trigger" id="settings-button" type="button">Settings</button>
 
           <p class="lan-note" id="lan-note">
@@ -55,6 +56,11 @@
           />
 
           <p class="file-badge" id="file-name" hidden></p>
+
+          <div class="setup-callout" id="setup-callout" hidden>
+            <p>No voice is installed. Choose a language to set up speech. Nothing downloads until you confirm.</p>
+            <button class="primary" id="setup-voices-button" type="button">Set up voices</button>
+          </div>
 
           <div class="startup-error-card" id="startup-error-card" hidden>
             <p class="startup-error-title" id="startup-error-title">Startup issue</p>
@@ -127,6 +133,33 @@
           </div>
         </aside>
       </main>
+
+      <div class="settings-overlay" id="models-overlay" hidden>
+        <section class="settings-dialog model-dialog panel" aria-labelledby="models-title" aria-modal="true" role="dialog">
+          <div class="panel-header settings-header">
+            <div><p class="eyebrow">Local assets</p><h2 id="models-title">Model manager</h2></div>
+            <button class="secondary settings-close" id="models-close" type="button">Done</button>
+          </div>
+          <p id="model-message" role="status"></p>
+          <p id="model-unavailable" hidden>Management requires a local service and desktop authorization.</p>
+          <div id="model-content" hidden>
+            <p>Choose languages. Opening this page does not download anything.</p>
+            <div id="model-choices" class="model-choices"></div>
+            <h3>Required assets</h3>
+            <ul id="model-assets"></ul>
+            <p id="model-size"></p>
+            <p id="model-progress" role="status" hidden></p>
+            <div class="model-actions">
+              <button class="primary" id="model-download" type="button">Download / retry</button>
+              <button class="secondary" id="model-cancel" type="button" hidden>Cancel download</button>
+              <button class="secondary" id="model-remove" type="button">Remove selected</button>
+            </div>
+            <h3>Existing assets</h3>
+            <p>Import is optional. Original files are not deleted.</p>
+            <div id="model-migration" class="model-actions"></div>
+          </div>
+        </section>
+      </div>
 
       <div class="settings-overlay" id="settings-overlay" hidden>
         <section class="settings-dialog panel" aria-labelledby="settings-title" aria-modal="true" role="dialog">

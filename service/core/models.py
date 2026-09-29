@@ -53,6 +53,7 @@ class VoiceInfo(BaseModel):
     language: str = "en"
     gender: str = "f"
     sample_rate: int = 24000
+    available: bool = False
 
 
 class VoicesResponse(BaseModel):

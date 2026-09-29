@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Explicit, reversible user-owned Hyprland shortcuts for Local Voice."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+MARKER = "local-voice integration BEGIN (managed by local-voice-integration)"
+MASKS = {"SHIFT": 1, "CTRL": 4, "ALT": 8, "SUPER": 64}
+
+
+def shortcut(value):
+    sides = value.split("+")
+    if len(sides) != 2:
+        raise ValueError(f"Invalid shortcut: {value!r}. Use e.g. 'SUPER ALT + V'")
+    mods = sides[0].upper().split()
+    key = sides[1].strip()
+    if not mods or not re.fullmatch(r"[A-Za-z0-9_]+", key):
+        raise ValueError(f"Invalid shortcut: {value!r}. Use e.g. 'SUPER ALT + V'")
+    if len(set(mods)) != len(mods) or any(m not in MASKS for m in mods):
+        raise ValueError(f"Invalid modifiers in {value!r}")
+    return sum(MASKS[m] for m in mods), key, " ".join(mods)
+
+
+def atomic_write(path, text, mode=None):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".local-voice-", dir=path.parent)
+    try:
+        if mode is not None:
+            try:
+                os.fchmod(fd, mode)
+            except OSError:
+                os.close(fd)
+                raise
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def safe_file(path):
+    if path.is_symlink() or path.parent.is_symlink():
+        raise ValueError(f"Refusing symlink: {path}")
+
+
+def owned_block(text, start_marker, end_marker):
+    if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+        raise ValueError("Owned bindings changed or markers missing. Resolve manually.")
+    match = re.search(r"(?m)^" + re.escape(start_marker) + r"\n.*?^" + re.escape(end_marker) + r"\n?", text, re.S)
+    if match is None:
+        raise ValueError("Owned bindings changed or markers misplaced. Resolve manually.")
+    return match
+
+
+def effective_bindings():
+    try:
+        result = subprocess.run(["hyprctl", "binds", "-j"], capture_output=True, text=True, check=True)
+        binds = json.loads(result.stdout)
+        if not isinstance(binds, list):
+            raise ValueError("Expected a bindings array")
+        return binds
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"Cannot inspect effective Hyprland bindings: {exc}") from exc
+
+
+def target_file(home, recorded=None):
+    hypr = home / ".config/hypr"
+    provider = recorded or ("lua" if (hypr / "hyprland.lua").exists() else "conf")
+    if provider not in ("lua", "conf"):
+        raise ValueError("Unknown recorded Hyprland provider. No files changed.")
+    config = hypr / f"hyprland.{provider}"
+    bindings = hypr / f"bindings.{provider}"
+    safe_file(config)
+    safe_file(bindings)
+    if not config.is_file() or (provider == "lua" and not bindings.is_file()):
+        raise ValueError(f"No usable {provider} Hyprland configuration at {config} / {bindings}. No files changed.")
+    return provider, bindings
+
+
+def markers(provider):
+    comment = "--" if provider == "lua" else "#"
+    return f"{comment} {MARKER}", f"{comment} local-voice integration END"
+
+
+def run(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["setup", "remove"])
+    parser.add_argument("--read", help="Chosen read shortcut, e.g. 'SUPER ALT + V'")
+    parser.add_argument("--stop", help="Chosen stop shortcut, e.g. 'SUPER ALT + S'")
+    parser.add_argument("--selection", help="Optional selection toggle shortcut")
+    parser.add_argument("--apply", action="store_true", help="Apply the displayed changes")
+    args = parser.parse_args(argv)
+    home = Path.home()
+    state = home / ".config/local-voice/omarchy-integration.json"
+    safe_file(state)
+    record_text = state.read_text() if state.exists() else None
+    record = json.loads(record_text) if record_text is not None else None
+    if record is not None and (not isinstance(record, dict) or record.get("version") != 1):
+        raise ValueError("Unknown integration record. No files changed.")
+    provider, bindings = target_file(home, record.get("provider", "conf") if record else None)
+    start_marker, end_marker = markers(provider)
+    existed = bindings.exists()
+    original = bindings.read_text() if existed else ""
+
+    if args.action == "remove":
+        if not record:
+            print("No managed integration to remove.")
+            return
+        block = record.get("block")
+        match = owned_block(original, start_marker, end_marker)
+        if match.group() != block:
+            raise ValueError("Owned bindings changed. No files changed.")
+        start = match.start()
+        if record.get("prefix"):
+            if start == 0 or original[start - 1] != "\n":
+                raise ValueError("Owned separator changed. No files changed.")
+            start -= 1
+        updated = original[:start] + original[match.end():]
+        print(f"Remove only this block from {bindings}:\n{block}")
+        print(f"Remove ownership record: {state}")
+        if args.apply:
+            if not bindings.exists() or bindings.read_text() != original or state.read_text() != record_text:
+                raise ValueError("Integration changed during removal. No files changed.")
+            mode = bindings.stat().st_mode & 0o777
+            atomic_write(bindings, updated, mode)
+            try:
+                state.unlink()
+            except OSError:
+                atomic_write(bindings, original, mode)
+                raise
+        return
+
+    if record:
+        match = owned_block(original, start_marker, end_marker)
+        if match.group() != record.get("block"):
+            raise ValueError("Owned bindings changed. No files changed.")
+        if args.read or args.stop or args.selection:
+            raise ValueError("Already installed. Remove before choosing new shortcuts.")
+        print("Shortcuts already installed, no changes.")
+        return
+    if start_marker in original or end_marker in original:
+        raise ValueError("Untracked Local Voice markers. No files changed.")
+    if not args.read or not args.stop:
+        raise ValueError("Choose both --read and --stop. No default global shortcuts are assigned.")
+    read = shortcut(args.read)
+    stop = shortcut(args.stop)
+    selection = shortcut(args.selection) if args.selection else None
+    chosen = [read, stop] + ([selection] if selection else [])
+    if len({(mask, key.casefold()) for mask, key, _ in chosen}) != len(chosen):
+        raise ValueError("Chosen actions use the same shortcut.")
+    collisions = []
+    binds = effective_bindings()
+    for mask, key, _ in chosen:
+        for bind in binds:
+            if bind.get("modmask") == mask and str(bind.get("key", "")).casefold() == key.casefold() and bind.get("submap", "") == "":
+                collisions.append(f"{mask}+{key}: {bind.get('description') or bind.get('dispatcher')}")
+    if collisions:
+        raise ValueError("Effective binding conflicts:\n" + "\n".join(collisions) + "\nChoose different shortcuts.")
+    # No shell interpolation of clipboard text. Only fixed executable commands go into the config.
+    actions = [(read, "Local Voice read clipboard", "local-voice-controller read-clipboard"),
+               (stop, "Local Voice stop", "local-voice-controller stop")]
+    if selection:
+        actions.append((selection, "Local Voice toggle selection", "local-voice-controller toggle-selection"))
+    if provider == "lua":
+        lines = [f"o.bind({json.dumps(' + '.join((*mods.split(), key)))}, {json.dumps(description)}, {json.dumps(command)})"
+                 for (_, key, mods), description, command in actions]
+    else:
+        lines = [f"bindd = {mods}, {key}, {description}, exec, {command}"
+                 for (_, key, mods), description, command in actions]
+    block = f"{start_marker}\n" + "\n".join(lines) + f"\n{end_marker}\n"
+    prefix = "" if not original or original.endswith("\n") else "\n"
+    print(f"Append to {bindings}:\n{prefix}{block}")
+    print(f"Create ownership record: {state} (exact managed block)")
+    print("No plugin, service, models, or system files will be changed.")
+    if args.apply:
+        # Recheck immediately before the write. Hyprland config must be reloaded by the user.
+        if bindings.exists() != existed or (existed and bindings.read_text() != original):
+            raise ValueError("Bindings changed during setup. No files changed.")
+        if state.exists():
+            raise ValueError("Ownership record appeared during setup. No files changed.")
+        atomic_write(bindings, original + prefix + block, bindings.stat().st_mode & 0o777 if bindings.exists() else 0o644)
+        try:
+            atomic_write(state, json.dumps({"version": 1, "provider": provider, "block": block, "prefix": prefix}, indent=2) + "\n", 0o600)
+        except Exception:
+            if existed:
+                atomic_write(bindings, original, bindings.stat().st_mode & 0o777)
+            else:
+                bindings.unlink()
+            raise
+        print("Run 'hyprctl reload' and 'hyprctl configerrors' in the target session to validate.")
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    except (ValueError, OSError) as exc:
+        print(f"local-voice-integration: {exc}", file=sys.stderr)
+        sys.exit(1)

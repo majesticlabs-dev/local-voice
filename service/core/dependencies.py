@@ -1,4 +1,5 @@
 import os
+import platform
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ class ProviderStatus:
     name: str
     model_name: str = ""
     ready: bool = False
+    installed: bool = False
     # BaseException: engine deps may raise SystemExit (e.g. spaCy model
     # resolution); that is reported as "not ready", not a crash.
     error: BaseException | None = None
@@ -78,6 +80,7 @@ def provider_dependency_status(
     provider_name: str,
     model_name: str,
     ready: bool,
+    installed: bool = False,
     error: BaseException | None = None,
 ) -> dict[str, object]:
     if error is not None:
@@ -87,12 +90,12 @@ def provider_dependency_status(
         if model_name:
             detail += f" ({model_name})"
     else:
-        detail = f"{provider_name} engine is installed but not ready yet"
+        detail = f"{provider_name} has no verified local voice; model setup may be required"
 
     return {
         "name": provider_name,
         "available": error is None and ready,
-        "required": True,
+        "required": installed,
         "detail": detail,
         "location": None,
     }
@@ -109,17 +112,23 @@ def ffmpeg_dependency_status() -> dict[str, object]:
             "location": str(ffmpeg),
         }
 
+    if platform.system() == "Linux":
+        guidance = (
+            "Install the ffmpeg package (on Omarchy: sudo pacman -S ffmpeg). "
+            "For the shared service, set LV_FFMPEG_PATH in a systemd user-service override "
+            "and restart local-voice.service."
+        )
+    else:
+        guidance = (
+            "Install it with brew install ffmpeg. "
+            "If the desktop app still cannot find it, set a custom ffmpeg path in app settings. "
+            "Standalone service runs can also use LV_FFMPEG_PATH."
+        )
     return {
         "name": "ffmpeg",
         "available": False,
         "required": True,
-        "detail": (
-            "ffmpeg is required for MP3 synthesis and export. "
-            "Checked PATH plus common Homebrew locations. "
-            "Install it with brew install ffmpeg. "
-            "If the desktop app still cannot find it, set a custom ffmpeg path in app settings. "
-            "Standalone service runs can also use LV_FFMPEG_PATH."
-        ),
+        "detail": f"ffmpeg is required for MP3 synthesis and export. {guidance}",
         "location": None,
     }
 
@@ -133,6 +142,7 @@ def runtime_dependencies(
             provider_name=status.name,
             model_name=status.model_name,
             ready=status.ready,
+            installed=status.installed,
             error=status.error,
         )
         for status in provider_statuses

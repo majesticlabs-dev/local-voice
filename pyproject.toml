@@ -1,6 +1,6 @@
 [project]
 name = "local-voice"
-version = "1.1.1"
+version = "1.2.0"
 description = "Read selected text aloud using a local TTS engine."
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -11,9 +11,17 @@ dependencies = [
     "kokoro>=0.9",
     "numpy",
     "pyyaml>=6.0",
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "piper-tts>=1.7.0",
+    "torch==2.11.0+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.scripts]
 local-voice = "service.app:main"
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

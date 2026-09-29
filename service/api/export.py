@@ -10,6 +10,7 @@ from ..core.chunking import chunk_text
 from ..core.config import config
 from ..core.jobs import registry
 from ..core.models import ExportRequest
+from ..core.setup import local_voice_paths, SetupNeeded
 
 router = APIRouter()
 
@@ -27,17 +28,17 @@ def _sorted_chunk_files(chunk_dir: Path) -> list[Path]:
 
 
 def _synthesize_cached(text: str, voice: str, rate: float, fmt: str) -> bytes:
+    local_voice_paths(voice)
     key = cache_key(text, voice, rate, fmt)
     cached = get_cached(key, fmt)
     if cached:
         return cached
 
     provider = _get_provider()
-    if not provider.is_ready():
-        raise HTTPException(503, "TTS engine not ready")
-
     try:
         audio_bytes = provider.synthesize(text, voice, rate, fmt)
+    except SetupNeeded:
+        raise
     except Exception as exc:
         raise HTTPException(500, f"Synthesis error: {exc}") from exc
 
@@ -101,7 +102,7 @@ async def export_audio(req: ExportRequest):
                 chunk_path.write_bytes(chunk_bytes)
                 paths.append(chunk_path)
             audio_bytes = concat_audio_files(paths, output_format="mp3")
-    except HTTPException:
+    except (HTTPException, SetupNeeded):
         raise
     except Exception as exc:
         raise HTTPException(500, f"Export error: {exc}") from exc

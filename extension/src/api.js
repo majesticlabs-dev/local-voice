@@ -1,3 +1,17 @@
+export const SETUP_GUIDANCE = 'Model setup required. Open the Local Voice desktop app to download the language in Model Manager.';
+
+async function responseError(res, fallback) {
+  let detail;
+  try {
+    const body = await res.json();
+    if (body?.error === 'setup_needed') return new Error(SETUP_GUIDANCE);
+    detail = typeof body?.detail === 'string' ? body.detail : undefined;
+  } catch (_) {
+    // Keep the HTTP status when the service returns a non-JSON error.
+  }
+  return new Error(`${fallback} (${res.status})${detail ? `: ${detail}` : ''}`);
+}
+
 export class LocalTTSClient {
   constructor(baseUrl = 'http://127.0.0.1:5517') {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
@@ -30,8 +44,7 @@ export class LocalTTSClient {
       }),
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Synthesis failed (${res.status}): ${body}`);
+      throw await responseError(res, 'Synthesis failed');
     }
     return res.blob();
   }
@@ -50,8 +63,7 @@ export class LocalTTSClient {
       }),
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Stream failed (${res.status}): ${body}`);
+      throw await responseError(res, 'Stream failed');
     }
     return res.json();
   }
@@ -65,8 +77,7 @@ export class LocalTTSClient {
         await new Promise((resolve) => setTimeout(resolve, 250));
         continue;
       }
-      const body = await res.text();
-      throw new Error(`Chunk fetch failed (${res.status}): ${body || 'Unknown error'}`);
+      throw await responseError(res, 'Chunk fetch failed');
     }
     throw new Error('Chunk fetch timed out while waiting for synthesis.');
   }

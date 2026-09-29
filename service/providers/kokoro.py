@@ -1,10 +1,16 @@
+import importlib.util
 import logging
+import os
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 
 from .base import TTSProvider
 from ..core.audio import wav_from_pcm, convert_to_mp3
+from ..core.config import config
+from ..core.setup import local_voice_paths, has_local_voice, voice_asset_ids, SetupNeeded
+from ..core import model_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -25,34 +31,29 @@ def _lang_code_for_voice(voice: str) -> str:
     return code if code in SUPPORTED_LANG_CODES else DEFAULT_LANG_CODE
 
 
+_espeak_staging: tempfile.TemporaryDirectory | None = None
+_load_lock = threading.RLock()
+
+
 def _prepare_espeak_data_root(data_path: Path) -> Path:
+    global _espeak_staging
     direct_root = data_path.parent
-    if " " not in str(direct_root):
+    # The phonemizer fork resolves symlinks before calling espeak_Initialize.
+    # espeak-ng truncates long paths in its internal buffer, then looks for
+    # phontab in the wrong directory. A symlink alone cannot shorten that path.
+    if " " not in str(direct_root) and len(os.fsencode(data_path)) < 100:
         return direct_root
 
-    staging_root = Path(tempfile.gettempdir()) / "local-voice-espeak"
-    staging_data = staging_root / "espeak-ng-data"
-    resolved_data_path = data_path.resolve()
-
-    if staging_data.exists() or staging_data.is_symlink():
-        try:
-            if staging_data.resolve() == resolved_data_path:
-                return staging_root
-        except OSError:
-            pass
-
-        if staging_data.is_symlink() or staging_data.is_file():
-            staging_data.unlink()
-        else:
-            shutil.rmtree(staging_data)
-
-    staging_root.mkdir(parents=True, exist_ok=True)
-    try:
-        staging_data.symlink_to(resolved_data_path, target_is_directory=True)
-    except OSError:
-        shutil.copytree(resolved_data_path, staging_data)
-
-    return staging_root
+    with _load_lock:
+        if _espeak_staging is None:
+            staging = tempfile.TemporaryDirectory(prefix="lv-espeak-")
+            try:
+                shutil.copytree(data_path, Path(staging.name) / "espeak-ng-data")
+            except Exception:
+                staging.cleanup()
+                raise
+            _espeak_staging = staging
+        return Path(_espeak_staging.name)
 
 
 def _configure_espeak_backend() -> None:
@@ -68,8 +69,12 @@ def _configure_espeak_backend() -> None:
 
 
 def _load_kokoro(lang_code: str = DEFAULT_LANG_CODE):
-    """Import kokoro once and return the pipeline for `lang_code`, creating it
-    on first use. Pipelines are cached per language."""
+    """Return the cached pipeline, or initialize it under the shared lock."""
+    with _load_lock:
+        return _load_kokoro_locked(lang_code)
+
+
+def _load_kokoro_locked(lang_code):
     global _kokoro
     if _kokoro is None:
         try:
@@ -86,7 +91,20 @@ def _load_kokoro(lang_code: str = DEFAULT_LANG_CODE):
 
     pipeline = _pipelines.get(lang_code)
     if pipeline is None:
-        pipeline = _kokoro.KPipeline(lang_code=lang_code)
+        # Misaki's English constructor calls spacy.cli.download when its
+        # package is missing. Never enter that constructor in that state.
+        if lang_code in ("a", "b"):
+            from ..core import spacy_model
+            import spacy.util
+            if not spacy_model.activate() or not spacy.util.is_package("en_core_web_sm"):
+                raise SetupNeeded("en", ["spacy-en-core-web-sm"])
+        from kokoro import KModel
+        root = config.models_dir / "kokoro"
+        model = KModel(repo_id="hexgrad/Kokoro-82M",
+                       config=str(root / "config.json"),
+                       model=str(root / "kokoro-v1_0.pth"))
+        pipeline = _kokoro.KPipeline(lang_code=lang_code, model=model,
+                                     repo_id="hexgrad/Kokoro-82M")
         _pipelines[lang_code] = pipeline
         logger.info("Kokoro pipeline loaded (lang_code=%s)", lang_code)
     return pipeline
@@ -97,14 +115,7 @@ class KokoroProvider(TTSProvider):
     model_name = "kokoro-82m"
 
     def is_ready(self) -> bool:
-        try:
-            _load_kokoro()
-            return True
-        except (Exception, SystemExit):
-            # Some engine dependencies (e.g. spaCy model resolution) call
-            # sys.exit() on failure, which raises SystemExit rather than
-            # Exception. Treat that as "not ready" instead of crashing.
-            return False
+        return importlib.util.find_spec("kokoro") is not None and has_local_voice(self.name)
 
     def list_voices(self) -> list[dict]:
         # Kokoro voices — return known defaults
@@ -178,19 +189,28 @@ class KokoroProvider(TTSProvider):
     def synthesize(
         self, text: str, voice: str, rate: float, audio_format: str
     ) -> bytes:
-        pipeline = _load_kokoro(_lang_code_for_voice(voice))
-        import numpy as np
+        with model_lifecycle.using(set(voice_asset_ids(voice))):
+            paths = local_voice_paths(voice)
+            pipeline = _load_kokoro(_lang_code_for_voice(voice))
+            # Passing the path (with .pt) bypasses Kokoro's HF voice loader.
+            voice_path = str(paths[f"kokoro-{voice}"])
+            import numpy as np
 
-        # samples is a numpy array of float32 [-1, 1]
-        pcm = _collect_audio_samples(pipeline(text, voice=voice, speed=rate))
-        pcm_int16 = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
-        pcm_bytes = pcm_int16.tobytes()
+            # samples is a numpy array of float32 [-1, 1]
+            pcm = _collect_audio_samples(pipeline(text, voice=voice_path, speed=rate))
+            pcm_int16 = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
+            pcm_bytes = pcm_int16.tobytes()
 
-        wav_data = wav_from_pcm(pcm_bytes, sample_rate=24000)
+            wav_data = wav_from_pcm(pcm_bytes, sample_rate=24000)
 
-        if audio_format == "mp3":
-            return convert_to_mp3(wav_data)
-        return wav_data
+            if audio_format == "mp3":
+                return convert_to_mp3(wav_data)
+            return wav_data
+
+    def release_assets(self, assets: set[str]) -> None:
+        if any(key.startswith("kokoro-") or key == "spacy-en-core-web-sm" for key in assets):
+            with _load_lock:
+                _pipelines.clear()
 
     def cancel(self, job_id: str) -> None:
         # Kokoro runs synchronously per call — cancellation handled at job layer

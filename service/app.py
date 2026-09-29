@@ -1,13 +1,16 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import config
 from .core.dependencies import ProviderStatus, runtime_dependencies
 from .providers.base import TTSProvider
+from .core.setup import SetupNeeded
+from .core import model_lifecycle
 from .providers.kokoro import KokoroProvider
-from .api import export, health, preprocess, stop, stream, synthesize, voices
+from .api import export, health, model_management, preprocess, stop, stream, synthesize, voices
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,7 +18,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_voice")
 
-app = FastAPI(title="Local Voice TTS", version="1.1.1")
+app = FastAPI(title="Local Voice TTS", version="1.2.0")
+
+
+@app.exception_handler(SetupNeeded)
+async def setup_needed(_request: Request, exc: SetupNeeded):
+    return JSONResponse(status_code=503, content={
+        "error": "setup_needed", "voice": exc.voice, "assets": exc.assets,
+        "detail": str(exc),
+    })
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,6 +37,18 @@ app.add_middleware(
 
 # Provider registry
 _provider: TTSProvider | None = None
+
+
+def _release_provider_caches(assets: set[str]) -> None:
+    from .providers.piper import PiperProvider
+    KokoroProvider().release_assets(assets)
+    PiperProvider().release_assets(assets)
+    if "spacy-en-core-web-sm" in assets:
+        from .core import spacy_model
+        spacy_model.deactivate()
+
+
+model_lifecycle.register_release(_release_provider_caches)
 
 
 def get_provider() -> TTSProvider:
@@ -51,6 +74,8 @@ def get_provider_statuses() -> list[ProviderStatus]:
     for child in children:
         status = ProviderStatus(name=child.name, model_name=child.model_name)
         try:
+            from .core.setup import has_local_voice
+            status.installed = has_local_voice(child.name)
             status.ready = child.is_ready()
         except (Exception, SystemExit) as exc:
             status.error = exc
@@ -75,6 +100,7 @@ def _build_provider() -> TTSProvider:
 
 
 # Routes
+app.include_router(model_management.router)
 app.include_router(health.router)
 app.include_router(voices.router)
 app.include_router(synthesize.router)
