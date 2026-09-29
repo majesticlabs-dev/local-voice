@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import socket
@@ -81,6 +82,7 @@ class LocalOnlyTests(unittest.TestCase):
             with self.assertRaises(SetupNeeded):
                 piper._load_voice("ru_RU-dmitri-medium")
 
+    @unittest.skipUnless(importlib.util.find_spec("kokoro"), "Kokoro runtime is not installed in lean CI")
     def test_real_kokoro_loader_with_invalid_local_fixture_does_not_fetch(self):
         assets = {}
         for asset_id in ("kokoro-config", "kokoro-weights", "kokoro-ef_dora"):
@@ -98,6 +100,7 @@ class LocalOnlyTests(unittest.TestCase):
             with self.assertRaises((ValueError, RuntimeError)):
                 kokoro.KokoroProvider().synthesize("hola", "ef_dora", 1.0, "wav")
 
+    @unittest.skipUnless(importlib.util.find_spec("spacy"), "spaCy runtime is not installed in lean CI")
     def test_kokoro_english_refuses_misaki_downloader_without_installed_spacy(self):
         import spacy.util
         kokoro._pipelines.clear()

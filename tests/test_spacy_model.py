@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 from pathlib import Path
 import tempfile
@@ -55,6 +56,7 @@ class SpacyModelTests(unittest.TestCase):
             time.sleep(.01)
         self.fail("job did not finish")
 
+    @unittest.skipUnless(importlib.util.find_spec("spacy"), "spaCy runtime is not installed in lean CI")
     def test_verified_download_activation_restart_and_removal(self):
         import spacy.util
         self.assertFalse(spacy_model.activate())

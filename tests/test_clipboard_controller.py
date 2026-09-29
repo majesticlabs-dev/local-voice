@@ -35,6 +35,7 @@ class Fixture(BaseHTTPRequestHandler):
         pass
 
 
+@unittest.skipUnless(sys.platform == "linux", "Clipboard controller requires Linux SO_PEERCRED and pidfd")
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="lv-t07-")
