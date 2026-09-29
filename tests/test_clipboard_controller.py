@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import textwrap
 import sys
 import tempfile
 import threading
@@ -123,6 +124,19 @@ class ControllerTests(unittest.TestCase):
             self.wait_for(lambda: controller.status()["state"] == "error")
             self.assertIn("Missing command", controller.status()["error"])
 
+    def test_image_only_clipboard_has_clear_private_error(self):
+        paste = Path(self.tmp.name) / "bin/wl-paste"
+        paste.write_text('#!/bin/sh\necho "private image data" >&2\nexit 1\n')
+        controller = Controller()
+        controller.read_clipboard()
+        self.wait_for(lambda: controller.status()["state"] == "error")
+        self.assertEqual(controller.status()["error"], "Clipboard has no text")
+        controller.read_clipboard(selection=True)
+        self.wait_for(lambda: controller.status()["state"] == "error"
+                      and controller.status()["error"] == "Selection has no text")
+        self.assertNotIn("private image data", json.dumps(controller.status()))
+        self.assertEqual(Fixture.received, [])
+
     def test_selection_reads_primary_and_toggle_stops(self):
         paste = Path(self.tmp.name) / "bin/wl-paste"
         paste.write_text('#!/bin/sh\n[ "$1" = "--primary" ] || exit 3\ncat "$LV_TEST_CLIPBOARD"\n')
@@ -220,8 +234,67 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(process.poll())
             with socket.socket(socket.AF_UNIX) as client:
                 client.connect(str(path))
-                client.sendall(b"status\n")
-                self.assertEqual(json.loads(client.recv(4096))["state"], "idle")
+                client.sendall(b"1 status\n")
+                response = json.loads(client.recv(4096))
+                self.assertEqual(response["state"], "idle")
+                self.assertEqual(response["protocol"], clipboard_controller.PROTOCOL_VERSION)
+
+    def test_stale_controller_is_replaced_before_status(self):
+        root = Path(self.tmp.name)
+        legacy = root / "legacy/service"
+        legacy.mkdir(parents=True)
+        (legacy / "__init__.py").write_text("")
+        (legacy / "clipboard_controller.py").write_text(textwrap.dedent('''\
+            import fcntl, json, os, socket
+            from pathlib import Path
+            path = Path(os.environ["XDG_RUNTIME_DIR"]) / "local-voice/controller.sock"
+            path.parent.mkdir(mode=0o700, exist_ok=True)
+            os.chmod(path.parent, 0o700)
+            with open(path.with_suffix(".lock"), "a+b") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                path.unlink(missing_ok=True)
+                with socket.socket(socket.AF_UNIX) as listener:
+                    listener.bind(str(path))
+                    listener.listen(8)
+                    while True:
+                        client, _ = listener.accept()
+                        with client:
+                            command = client.recv(128).decode().strip()
+                            value = {"state": "idle", "error": None} if command in ("status", "stop") else {"state": "error", "error": "Unknown command"}
+                            client.sendall(json.dumps(value).encode())
+        '''))
+        old = subprocess.Popen([sys.executable, "-m", "service.clipboard_controller", "serve"],
+                               env={**os.environ, "PYTHONPATH": str(root / "legacy")}, cwd=root / "legacy",
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: (old.terminate(), old.wait(timeout=3)) if old.poll() is None else None)
+        path = root / "local-voice/controller.sock"
+        self.wait_for(path.exists)
+        with self.assertRaises(clipboard_controller.ProtocolMismatch) as mismatch:
+            clipboard_controller.send(path, "status")
+        self.assertEqual(mismatch.exception.pid, old.pid)
+        original_popen = subprocess.Popen
+        spawned = []
+        with open(root / "replacement.log", "w+") as log:
+            def launch(*args, **kwargs):
+                process = original_popen(*args, **{**kwargs, "stderr": log})
+                spawned.append(process)
+                return process
+            with patch.object(clipboard_controller.subprocess, "Popen", side_effect=launch):
+                try:
+                    result = clipboard_controller.controller_command(path, "status")
+                except RuntimeError as exc:
+                    log.seek(0)
+                    self.fail(f"{exc}: {log.read()}")
+        self.assertEqual(result["state"], "idle")
+        self.assertEqual(result["protocol"], clipboard_controller.PROTOCOL_VERSION)
+        old.wait(timeout=3)
+        _, replacement_pid = clipboard_controller.exchange(path, "1 status")
+        self.assertNotEqual(replacement_pid, old.pid)
+        self.addCleanup(lambda: (spawned[0].terminate(), spawned[0].wait(timeout=3)) if spawned[0].poll() is None else None)
+
+    def test_unrelated_socket_owner_is_not_terminated(self):
+        with self.assertRaisesRegex(ValueError, "unrecognized process"):
+            clipboard_controller.replace_stale_controller(Path(self.tmp.name) / "controller.sock", os.getpid())
 
     def test_socket_status_and_stop_do_not_read_clipboard(self):
         root = Path(self.tmp.name)

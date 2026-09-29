@@ -3,12 +3,16 @@
 CLI: python -m service.clipboard_controller {read-clipboard|stop|status|quit|start}
 The first read starts a per-user controller process. Status and stop never start it.
 """
+import ctypes
 import fcntl
 import json
 import os
 from pathlib import Path
 import re
+import select
+import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -20,6 +24,13 @@ from .core.speakable import prepare
 
 MAX_TEXT = 50000
 MAX_AUDIO = 32 * 1024 * 1024
+PROTOCOL_VERSION = 1
+
+
+class ProtocolMismatch(Exception):
+    def __init__(self, pid):
+        self.pid = pid
+        super().__init__("Controller version mismatch")
 
 
 def runtime_dir():
@@ -88,8 +99,13 @@ class Controller:
             command = ["wl-paste", "--no-newline", "--type", "text/plain"]
             if selection:
                 command.insert(1, "--primary")
-            clip = subprocess.run(command,
-                                  capture_output=True, timeout=5, check=True)
+            try:
+                clip = subprocess.run(command,
+                                      capture_output=True, timeout=5, check=True)
+            except subprocess.CalledProcessError:
+                # wl-paste exits nonzero when no text/plain offer exists. Do not
+                # expose its stderr or any clipboard data in the status.
+                raise ValueError("Selection has no text" if selection else "Clipboard has no text") from None
             if len(clip.stdout) > MAX_TEXT * 4:
                 raise ValueError("Clipboard text is too large")
             text = clip.stdout.decode("utf-8").strip()
@@ -182,10 +198,7 @@ def service_action(action):
 
 
 def quit_local_voice(path, marker):
-    try:
-        send(path, "stop")
-    except (OSError, ValueError):
-        pass  # No controller session to stop.
+    controller_command(path, "stop")  # An absent controller has no playback to stop.
     for address in desktop_windows():
         # Hyprland sends a normal window close request. Tauri handles CloseRequested.
         subprocess.run(["hyprctl", "dispatch", "closewindow", "address:" + address],
@@ -201,12 +214,82 @@ def start_local_voice(marker):
     return {"state": "idle", "error": None}
 
 
-def send(path, command):
+def exchange(path, command):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(2)
         connection.connect(str(path))
+        pid, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if uid != os.getuid():
+            raise ValueError("Controller belongs to another user")
         connection.sendall((command + "\n").encode())
-        return json.loads(connection.recv(4096))
+        return json.loads(connection.recv(4096)), pid
+
+
+def send(path, command):
+    result, pid = exchange(path, f"{PROTOCOL_VERSION} {command}")
+    if result.get("protocol") != PROTOCOL_VERSION:
+        raise ProtocolMismatch(pid)
+    return result
+
+
+def replace_stale_controller(path, pid):
+    # The packaged Python lacks os.pidfd_open. Use glibc's pidfd interface so
+    # PID reuse cannot redirect SIGTERM to an unrelated process.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.pidfd_open.argtypes = [ctypes.c_int, ctypes.c_uint]
+    libc.pidfd_open.restype = ctypes.c_int
+    libc.pidfd_send_signal.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+    libc.pidfd_send_signal.restype = ctypes.c_int
+    fd = libc.pidfd_open(pid, 0)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "Cannot identify old controller")
+    try:
+        proc = Path("/proc") / str(pid)
+        args = (proc / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+        if (proc.stat().st_uid != os.getuid() or len(args) != 4
+                or args[1:] != [b"-m", b"service.clipboard_controller", b"serve"]
+                or not Path(os.fsdecode(args[0])).name.startswith("python")):
+            raise ValueError("Controller socket belongs to an unrecognized process; refusing to replace it")
+        try:
+            # Old servers understand this command; stop their player first.
+            _, peer = exchange(path, "stop")
+            if peer != pid:
+                raise ValueError("Controller changed during replacement")
+        except (OSError, json.JSONDecodeError):
+            pass
+        if libc.pidfd_send_signal(fd, signal.SIGTERM, None, 0) != 0:
+            raise OSError(ctypes.get_errno(), "Cannot stop old controller")
+        poller = select.poll()
+        poller.register(fd, select.POLLIN)
+        if not poller.poll(3000):
+            raise RuntimeError("Old controller did not exit after SIGTERM")
+    finally:
+        os.close(fd)
+
+
+def launch_and_send(path, command):
+    subprocess.Popen([sys.executable, "-m", "service.clipboard_controller", "serve"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(100):
+        time.sleep(0.05)
+        try:
+            return send(path, command)
+        except (OSError, ValueError):
+            continue
+    raise RuntimeError("Controller could not start")
+
+
+def controller_command(path, command, start_if_missing=False):
+    try:
+        return send(path, command)
+    except ProtocolMismatch as exc:
+        replace_stale_controller(path, exc.pid)
+        return launch_and_send(path, command)
+    except (OSError, ValueError):
+        if start_if_missing:
+            return launch_and_send(path, command)
+        return {"state": "offline", "error": None}
 
 
 def serve(path):
@@ -225,7 +308,12 @@ def serve(path):
                     with connection:
                         connection.settimeout(2)
                         try:
-                            command = connection.recv(128).decode().strip()
+                            message = connection.recv(128).decode().strip()
+                            prefix = f"{PROTOCOL_VERSION} "
+                            if not message.startswith(prefix):
+                                connection.sendall(b'{"state":"error","error":"Controller version mismatch"}')
+                                continue
+                            command = message[len(prefix):]
                             if command == "read-clipboard":
                                 controller.read_clipboard()
                             elif command == "read-selection":
@@ -235,9 +323,9 @@ def serve(path):
                             elif command == "stop":
                                 controller.stop()
                             elif command != "status":
-                                connection.sendall(b'{"state":"error","error":"Unknown command"}')
+                                connection.sendall(json.dumps({"state": "error", "error": "Unknown command", "protocol": PROTOCOL_VERSION}).encode())
                                 continue
-                            connection.sendall(json.dumps(controller.status()).encode())
+                            connection.sendall(json.dumps({**controller.status(), "protocol": PROTOCOL_VERSION}).encode())
                         except (OSError, UnicodeDecodeError):
                             continue
             finally:
@@ -265,24 +353,10 @@ def main():
         serve(path)
         return 0
     try:
-        result = send(path, command)
-    except (OSError, ValueError):
-        if command not in reads:
-            result = {"state": "offline", "error": None}
-        else:
-            subprocess.Popen([sys.executable, "-m", "service.clipboard_controller", "serve"],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
-            for _ in range(30):
-                time.sleep(0.05)
-                try:
-                    result = send(path, command)
-                    break
-                except (OSError, ValueError):
-                    continue
-            else:
-                result = {"state": "error", "error": "Controller could not start"}
-    if command == "status" and marker.exists():
+        result = controller_command(path, command, start_if_missing=command in reads)
+    except (OSError, ValueError, RuntimeError) as exc:
+        result = {"state": "error", "error": str(exc)}
+    if command == "status" and marker.exists() and result["state"] != "error":
         result = {"state": "off", "error": None}
     print(json.dumps(result))
     return 1 if result["state"] == "error" else 0

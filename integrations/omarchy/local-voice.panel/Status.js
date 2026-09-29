@@ -1,4 +1,15 @@
 // Data from the controller and health endpoint only. Never read clipboard content here.
+function commands() {
+  return {
+    status: ["local-voice-controller", "status"],
+    read: ["local-voice-controller", "read-clipboard"],
+    selection: ["local-voice-controller", "toggle-selection"],
+    stop: ["local-voice-controller", "stop"],
+    quit: ["local-voice-controller", "quit"],
+    start: ["local-voice-controller", "start"],
+    app: ["local-voice-desktop"]
+  }
+}
 function controller(output, exitCode) {
   try {
     var value = JSON.parse(output)
@@ -46,7 +57,7 @@ function icon(controllerState, serviceState) {
   var state = label(controllerState, serviceState)
   if (state === "Off") return "󰐥"
   if (state === "Service down") return "󰅛"
-  if (state === "Playback error" || state === "Service error") return "󰀦"
+  if (controllerState.state === "error" || state === "Service error") return "󰀦"
   if (state === "Setup needed") return "󰋼"
   if (state === "Playing") return "󰓃"
   if (state === "Reading" || state === "Synthesizing") return "󰓄"
@@ -60,7 +71,11 @@ function label(controllerState, serviceState) {
   if (controllerState.state === "synthesizing") return "Synthesizing"
   if (controllerState.state === "reading") return "Reading"
   if (controllerState.state === "setup_needed" || serviceState === "setup_needed") return "Setup needed"
-  if (controllerState.state === "error") return "Playback error"
+  if (controllerState.state === "error") {
+    if (["Clipboard has no text", "Selection has no text"].indexOf(controllerState.error) !== -1)
+      return controllerState.error
+    return "Playback error"
+  }
   if (serviceState === "degraded") return "Service error"
   return "Ready"
 }

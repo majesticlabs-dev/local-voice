@@ -14,6 +14,9 @@ assert.equal(status.label(fakeController('idle'), 'setup_needed'), 'Setup needed
 assert.equal(status.label(fakeController('setup_needed'), 'ready'), 'Setup needed');
 assert.equal(status.label(fakeController('playing'), 'down'), 'Service down');
 assert.equal(status.label(fakeController('error'), 'ready'), 'Playback error');
+assert.equal(status.label(status.controller('{"state":"error","error":"Clipboard has no text"}', 0), 'ready'), 'Clipboard has no text');
+assert.equal(status.label(status.controller('{"state":"error","error":"Selection has no text"}', 0), 'ready'), 'Selection has no text');
+assert.equal(status.icon(status.controller('{"state":"error","error":"Clipboard has no text"}', 0), 'ready'), status.icon(fakeController('error'), 'ready'));
 assert.equal(status.service('{"status":"setup_needed"}', 0), 'setup_needed');
 assert.equal(status.service('{"status":"ok"}', 0), 'ready');
 assert.equal(status.service('{"status":"ok"}', 7), 'down');

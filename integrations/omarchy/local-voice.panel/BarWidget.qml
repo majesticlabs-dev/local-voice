@@ -47,7 +47,7 @@ BarWidget {
 
   Process {
     id: statusProcess
-    command: ["local-voice-controller", "status"]
+    command: Status.commands().status
     stdout: StdioCollector { id: statusOutput; waitForEnd: true }
     onExited: function(code) { root.playback = Status.controller(statusOutput.text, code) }
   }
@@ -61,36 +61,36 @@ BarWidget {
 
   Process {
     id: readProcess
-    command: ["local-voice-controller", "read-clipboard"]
+    command: Status.commands().read
     onExited: root.refresh()
   }
 
   Process {
     id: selectionProcess
-    command: ["local-voice-controller", "toggle-selection"]
+    command: Status.commands().selection
     onExited: root.refresh()
   }
 
   Process {
     id: stopProcess
-    command: ["local-voice-controller", "stop"]
+    command: Status.commands().stop
     onExited: root.refresh()
   }
 
   Process {
     id: appProcess
-    command: ["local-voice"]
+    command: Status.commands().app
   }
 
   Process {
     id: quitProcess
-    command: ["local-voice-controller", "quit"]
+    command: Status.commands().quit
     onExited: root.refresh()
   }
 
   Process {
     id: startProcess
-    command: ["local-voice-controller", "start"]
+    command: Status.commands().start
     onExited: root.refresh()
   }
 

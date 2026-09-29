@@ -24,4 +24,10 @@ cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 export LOCAL_VOICE_SOURCE="$root"
 cd "$root/packaging/arch"
 makepkg --nodeps --force
-printf 'Package: %s\n' "$PWD"/*.pkg.tar.zst
+package="$(makepkg --packagelist)"
+mkdir -p "$sandbox/widget-package"
+tar -xf "$package" -C "$sandbox/widget-package" \
+  usr/bin/local-voice-controller usr/bin/local-voice-desktop \
+  usr/share/local-voice/local-voice.panel/Status.js
+node "$root/scripts/check-widget-package.mjs" "$sandbox/widget-package"
+printf 'Package: %s\n' "$package"
