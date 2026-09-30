@@ -187,7 +187,7 @@ BarWidget {
         }
         Button {
           width: parent.width
-          text: "Shortcut settings"
+          text: "Settings"
           leftAlign: true
           focusable: true
           onClicked: root.choose("settings")

@@ -14,8 +14,8 @@ scripts/check-and-package
 The script runs Python, Node, and Rust checks, validates the widget when `omarchy` is available, builds the desktop and runtime, then runs `makepkg --nodeps --force`. It prints the package path under `packaging/arch/`. Inspect that package before installing:
 
 ```sh
-bsdtar -tf packaging/arch/local-voice-1.2.0-1-x86_64.pkg.tar.zst
-sudo pacman -U packaging/arch/local-voice-1.2.0-1-x86_64.pkg.tar.zst
+bsdtar -tf packaging/arch/local-voice-1.2.0-2-x86_64.pkg.tar.zst
+sudo pacman -U packaging/arch/local-voice-1.2.0-2-x86_64.pkg.tar.zst
 ```
 
 Use the actual printed filename if it differs. `sudo` is required for `pacman` to write system package files under `/usr`. Do not run the build as root. Package installation does not enable the service, install a model, change Hyprland bindings, or enable a panel plugin.
@@ -50,7 +50,7 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable local-voice.panel
 ```
 
-This adds one status icon. Left-click to read the clipboard when idle, stop the controller while it reads or plays, or start Local Voice after Quit. Right-click for **Read clipboard**, **Read selection**, **Stop**, **Open Local Voice**, **Shortcut settings**, and **Quit Local Voice** (or **Start Local Voice** when off). Quit stops the controller, closes the matching desktop window, and stops the user service. It does not disable login startup. Stop affects panel and shortcut playback, not Chrome or desktop playback. Clipboard or selection text is read only after an explicit action. The panel polls service and controller status, not clipboard contents.
+This adds one status icon. Left-click to read the clipboard when idle, stop the controller while it reads or plays, or start Local Voice after Quit. Right-click for **Read clipboard**, **Read selection**, **Stop**, **Open Local Voice**, **Settings**, and **Quit Local Voice** (or **Start Local Voice** when off). Quit stops the controller, closes the matching desktop window, and stops the user service. It does not disable login startup. Stop affects panel and shortcut playback, not Chrome or desktop playback. Clipboard or selection text is read only after an explicit action. The panel polls service and controller status, not clipboard contents.
 
 After an upgrade, copy the new plugin files to the same user directory and restart the shell, since the running shell can keep old QML in memory:
 
@@ -61,7 +61,7 @@ omarchy-restart-shell
 
 ## Enable shortcuts (optional)
 
-All Omarchy shortcuts are disabled by default. **SUPER ALT + V/E/X** are examples, not active bindings. Select **Shortcut settings** in the panel menu, or run `local-voice-integration settings`. This creates `~/.config/local-voice/shortcuts.toml` with all entries disabled, then opens it with `$EDITOR` through `xdg-terminal-exec`, or `xdg-open` when no editor is set.
+All Omarchy shortcuts are disabled by default. **SUPER ALT + V/E/X** are examples, not active bindings. Select **Settings** in the panel menu, or run `local-voice-integration settings`. This creates `~/.config/local-voice/shortcuts.toml` with all entries disabled, then opens it with `$EDITOR` through `xdg-terminal-exec`, or `xdg-open` when no editor is set.
 
 Enable each action separately and choose an unused binding. For example, enable clipboard speech only:
 

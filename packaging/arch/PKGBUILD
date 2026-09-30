@@ -1,7 +1,7 @@
 # Local build recipe. Run scripts/check-and-package from the source checkout.
 pkgname=local-voice
 pkgver=1.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Local Voice desktop, shared TTS service, and Omarchy controls'
 arch=('x86_64')
 url='https://github.com/majesticlabs/local-voice'
