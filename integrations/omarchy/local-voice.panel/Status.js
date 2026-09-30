@@ -7,7 +7,9 @@ function commands() {
     stop: ["local-voice-controller", "stop"],
     quit: ["local-voice-controller", "quit"],
     start: ["local-voice-controller", "start"],
-    app: ["local-voice-desktop"]
+    app: ["local-voice-desktop"],
+    shortcuts: ["local-voice-integration", "sync"],
+    settings: ["local-voice-integration", "settings"]
   }
 }
 function controller(output, exitCode) {

@@ -27,7 +27,7 @@ makepkg --nodeps --force
 package="$(makepkg --packagelist)"
 mkdir -p "$sandbox/widget-package"
 tar -xf "$package" -C "$sandbox/widget-package" \
-  usr/bin/local-voice-controller usr/bin/local-voice-desktop \
+  usr/bin/local-voice-controller usr/bin/local-voice-desktop usr/bin/local-voice-integration \
   usr/share/local-voice/local-voice.panel/Status.js
 node "$root/scripts/check-widget-package.mjs" "$sandbox/widget-package"
 printf 'Package: %s\n' "$package"

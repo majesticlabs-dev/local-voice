@@ -9,6 +9,232 @@ import re
 import subprocess
 import sys
 import tempfile
+import shlex
+import fcntl
+import ctypes
+import tomllib
+
+ACTIONS = {
+    "read": ("Local Voice read clipboard", "local-voice-controller read-clipboard"),
+    "selection": ("Local Voice toggle selection", "local-voice-controller toggle-selection"),
+    "stop": ("Local Voice stop", "local-voice-controller stop"),
+}
+TEMPLATE = '''# All shortcuts are disabled until enabled here. The panel applies saved changes.
+[read]
+enabled = false
+binding = "SUPER ALT + V"
+
+[selection]
+enabled = false
+binding = "SUPER ALT + E"
+
+[stop]
+enabled = false
+binding = "SUPER ALT + X"
+'''
+
+
+def warning(message):
+    print(f"local-voice-integration: warning: {message}", file=sys.stderr)
+
+
+def settings_path():
+    return Path.home() / ".config/local-voice/shortcuts.toml"
+
+
+def validate_key(key):
+    # Hyprland uses XKB key names. The library is part of the target desktop.
+    try:
+        library = ctypes.CDLL("libxkbcommon.so.0")
+        lookup = library.xkb_keysym_from_name
+        lookup.argtypes = [ctypes.c_char_p, ctypes.c_int]
+        lookup.restype = ctypes.c_uint32
+        if lookup(key.encode("ascii"), 1) == 0:
+            raise ValueError(f"Unknown XKB key: {key}")
+    except OSError as exc:
+        raise ValueError(f"Cannot validate key {key}: {exc}") from exc
+
+
+def configured_actions():
+    path = settings_path()
+    safe_file(path)
+    if not path.exists():
+        return []
+    try:
+        settings = tomllib.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        warning(f"Cannot read {path}: {exc}; disabling shortcuts")
+        return []
+    chosen = []
+    for name, entry in settings.items():
+        try:
+            if name not in ACTIONS or not isinstance(entry, dict):
+                raise ValueError(f"Unknown shortcut entry {name}")
+            if set(entry) - {"enabled", "binding"} or type(entry.get("enabled", False)) is not bool:
+                raise ValueError(f"Invalid settings for {name}")
+            if not entry.get("enabled", False):
+                continue
+            if not isinstance(entry.get("binding"), str):
+                raise ValueError(f"Missing binding for {name}")
+            binding = shortcut(entry["binding"])
+            validate_key(binding[1])
+            chosen.append((binding, *ACTIONS[name]))
+        except ValueError as exc:
+            warning(str(exc))
+    counts = {}
+    for (mask, key, _), _, _ in chosen:
+        identity = (mask, key.casefold())
+        counts[identity] = counts.get(identity, 0) + 1
+    result = []
+    for binding, description, command in chosen:
+        if counts[(binding[0], binding[1].casefold())] > 1:
+            warning(f"Conflicting settings binding for {description}; skipping")
+        else:
+            result.append((binding, description, command))
+    return result
+
+
+def open_settings():
+    path = settings_path()
+    safe_file(path)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x") as stream:
+            stream.write(TEMPLATE)
+    editor = shlex.split(os.environ.get("EDITOR", ""))
+    # Launch terminal editors in the user's terminal, not the panel's hidden stdout.
+    command = ["xdg-terminal-exec", *editor, str(path)] if editor else ["xdg-open", str(path)]
+    subprocess.Popen(command, start_new_session=True)
+
+
+def sync_settings():
+    directory = settings_path().parent
+    if not directory.exists():
+        return
+    lock = directory / ".shortcuts.lock"
+    safe_file(lock)
+    with lock.open("a") as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        pending = directory / ".shortcuts-reload-pending"
+        safe_file(pending)
+        if pending.exists():
+            reload_bindings(pending)
+        _sync_settings()
+
+
+def reload_bindings(pending):
+    subprocess.run(["hyprctl", "reload"], check=True, capture_output=True, text=True)
+    errors = subprocess.run(["hyprctl", "configerrors"], check=True, capture_output=True, text=True)
+    if errors.stdout.strip():
+        warning(f"Hyprland configerrors: {errors.stdout.strip()}")
+    pending.unlink()
+
+
+def _sync_settings():
+    home = Path.home()
+    state = home / ".config/local-voice/omarchy-integration.json"
+    safe_file(state)
+    record_text = state.read_text() if state.exists() else None
+    record = json.loads(record_text) if record_text else None
+    if record is not None and (not isinstance(record, dict) or record.get("version") != 1):
+        raise ValueError("Unknown integration record. No files changed.")
+    actions = configured_actions()
+    if not record and not actions:
+        return
+    provider, bindings = target_file(home, record.get("provider", "conf") if record else None)
+    existed = bindings.exists()
+    original = bindings.read_text() if existed else ""
+    start_marker, end_marker = markers(provider)
+    base = original
+    if record:
+        match = owned_block(original, start_marker, end_marker)
+        if match.group() != record.get("block"):
+            raise ValueError("Owned bindings changed. No files changed.")
+        start = match.start()
+        if record.get("prefix"):
+            if start == 0 or original[start - 1] != "\n":
+                raise ValueError("Owned separator changed. No files changed.")
+            start -= 1
+        base = original[:start] + original[match.end():]
+    elif start_marker in original or end_marker in original:
+        raise ValueError("Untracked Local Voice markers. No files changed.")
+    if actions:
+        try:
+            binds = effective_bindings()
+        except ValueError as exc:
+            warning(f"{exc}; disabling shortcuts")
+            binds = []
+            actions = []
+        valid = []
+        for binding, description, command in actions:
+            mask, key, _ = binding
+            collisions = [b for b in binds if b.get("modmask") == mask
+                          and str(b.get("key", "")).casefold() == key.casefold()
+                          and b.get("submap", "") == ""]
+            # Exclude only exact commands owned by our recorded block.
+            collisions = [b for b in collisions if not owned_effective_binding(b, record)]
+            if collisions:
+                warning(f"Existing binding conflicts with {description}; skipping")
+            else:
+                valid.append((binding, description, command))
+        actions = valid
+    if provider == "lua":
+        lines = [f"o.bind({json.dumps(' + '.join((*mods.split(), key)))}, {json.dumps(description)}, {json.dumps(command)})"
+                 for (_, key, mods), description, command in actions]
+    else:
+        lines = [f"bindd = {mods}, {key}, {description}, exec, {command}"
+                 for (_, key, mods), description, command in actions]
+    block = f"{start_marker}\n" + "\n".join(lines) + f"\n{end_marker}\n" if lines else ""
+    prefix = "" if not block or not base or base.endswith("\n") else "\n"
+    updated = base + prefix + block
+    if updated == original:
+        return
+    if bindings.exists() != existed or (existed and bindings.read_text() != original) or (state.read_text() if state.exists() else None) != record_text:
+        raise ValueError("Integration changed during sync. No files changed.")
+    mode = bindings.stat().st_mode & 0o777 if existed else 0o644
+    pending = state.parent / ".shortcuts-reload-pending"
+    atomic_write(pending, "reload required\n", 0o600)
+    atomic_write(bindings, updated, mode)
+    try:
+        if block:
+            atomic_write(state, json.dumps({"version": 1, "provider": provider, "block": block, "prefix": prefix}, indent=2) + "\n", 0o600)
+        elif state.exists():
+            state.unlink()
+    except Exception:
+        if existed:
+            atomic_write(bindings, original, mode)
+        else:
+            bindings.unlink()
+        pending.unlink()
+        raise
+    reload_bindings(pending)
+
+
+def owned_effective_binding(bind, record):
+    if not record or bind.get("dispatcher") != "exec":
+        return False
+    for line in record["block"].splitlines():
+        if record.get("provider", "conf") == "lua":
+            match = re.fullmatch(r'o.bind\((".*?"), (".*?"), (".*?")\)', line)
+            if not match:
+                continue
+            value, _, command = (json.loads(part) for part in match.groups())
+            parts = value.split(" + ")
+            binding = shortcut(" ".join(parts[:-1]) + " + " + parts[-1])
+        else:
+            match = re.fullmatch(r"bindd = ([^,]+), ([^,]+), [^,]+, exec, (.+)", line)
+            if not match:
+                continue
+            mods, key, command = match.groups()
+            binding = shortcut(mods + " + " + key)
+        if (bind.get("modmask") == binding[0]
+                and str(bind.get("key", "")).casefold() == binding[1].casefold()
+                and bind.get("arg") == command):
+            return True
+    return False
 
 MARKER = "local-voice integration BEGIN (managed by local-voice-integration)"
 MASKS = {"SHIFT": 1, "CTRL": 4, "ALT": 8, "SUPER": 64}
@@ -63,8 +289,8 @@ def effective_bindings():
     try:
         result = subprocess.run(["hyprctl", "binds", "-j"], capture_output=True, text=True, check=True)
         binds = json.loads(result.stdout)
-        if not isinstance(binds, list):
-            raise ValueError("Expected a bindings array")
+        if not isinstance(binds, list) or any(not isinstance(bind, dict) for bind in binds):
+            raise ValueError("Expected a bindings array of objects")
         return binds
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"Cannot inspect effective Hyprland bindings: {exc}") from exc
@@ -91,12 +317,18 @@ def markers(provider):
 
 def run(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["setup", "remove"])
+    parser.add_argument("action", choices=["setup", "remove", "sync", "settings"])
     parser.add_argument("--read", help="Chosen read shortcut, e.g. 'SUPER ALT + V'")
     parser.add_argument("--stop", help="Chosen stop shortcut, e.g. 'SUPER ALT + S'")
     parser.add_argument("--selection", help="Optional selection toggle shortcut")
     parser.add_argument("--apply", action="store_true", help="Apply the displayed changes")
     args = parser.parse_args(argv)
+    if args.action == "settings":
+        open_settings()
+        return
+    if args.action == "sync":
+        sync_settings()
+        return
     home = Path.home()
     state = home / ".config/local-voice/omarchy-integration.json"
     safe_file(state)
@@ -200,6 +432,6 @@ def run(argv=None):
 if __name__ == "__main__":
     try:
         run()
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"local-voice-integration: {exc}", file=sys.stderr)
         sys.exit(1)

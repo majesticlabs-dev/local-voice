@@ -50,7 +50,7 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable local-voice.panel
 ```
 
-This adds one status icon. Left-click to read the clipboard when idle, stop the controller while it reads or plays, or start Local Voice after Quit. Right-click for **Read clipboard**, **Read selection**, **Stop**, **Open Local Voice**, and **Quit Local Voice** (or **Start Local Voice** when off). Quit stops the controller, closes the matching desktop window, and stops the user service. It does not disable login startup. Stop affects panel and shortcut playback, not Chrome or desktop playback. Clipboard or selection text is read only after an explicit action. The panel polls service and controller status, not clipboard contents.
+This adds one status icon. Left-click to read the clipboard when idle, stop the controller while it reads or plays, or start Local Voice after Quit. Right-click for **Read clipboard**, **Read selection**, **Stop**, **Open Local Voice**, **Shortcut settings**, and **Quit Local Voice** (or **Start Local Voice** when off). Quit stops the controller, closes the matching desktop window, and stops the user service. It does not disable login startup. Stop affects panel and shortcut playback, not Chrome or desktop playback. Clipboard or selection text is read only after an explicit action. The panel polls service and controller status, not clipboard contents.
 
 After an upgrade, copy the new plugin files to the same user directory and restart the shell, since the running shell can keep old QML in memory:
 
@@ -59,28 +59,39 @@ cp -a /usr/share/local-voice/local-voice.panel ~/.config/omarchy/plugins/
 omarchy-restart-shell
 ```
 
-## Add shortcuts (optional)
+## Enable shortcuts (optional)
 
-Choose unused shortcuts. The first command previews exact changes and checks effective Hyprland bindings. Review its output before applying:
+All Omarchy shortcuts are disabled by default. **SUPER ALT + V/E/X** are examples, not active bindings. Select **Shortcut settings** in the panel menu, or run `local-voice-integration settings`. This creates `~/.config/local-voice/shortcuts.toml` with all entries disabled, then opens it with `$EDITOR` through `xdg-terminal-exec`, or `xdg-open` when no editor is set.
+
+Enable each action separately and choose an unused binding. For example, enable clipboard speech only:
+
+```toml
+[read]
+enabled = true
+binding = "SUPER ALT + V"
+
+[selection]
+enabled = false
+binding = "SUPER ALT + E"
+
+[stop]
+enabled = false
+binding = "SUPER ALT + X"
+```
+
+Modifiers are `SUPER`, `ALT`, `CTRL`, and `SHIFT`. Use spaces between modifiers and one `+` before an XKB key name (such as `V`, `F8`, or `XF86AudioPlay`). Unknown keys are skipped. Key validation uses the desktop's `libxkbcommon` library. Selection toggles speech of the Wayland primary selection; stop affects only controller playback. Panel buttons remain available without shortcuts.
+
+The updated panel checks settings every three seconds and applies saved changes. Without the panel, run `local-voice-integration sync` after each edit. It checks effective Hyprland bindings, skips collisions, updates only its managed block in `~/.config/hypr/bindings.lua` (or legacy `bindings.conf`), and reloads Hyprland. Ownership is recorded in `~/.config/local-voice/omarchy-integration.json`. Invalid entries are skipped with a warning; duplicate bindings disable both conflicting entries. A malformed TOML file disables all managed shortcuts. Warnings appear in shell logs or command stderr. No clipboard text is read by this settings check.
+
+Delete the TOML file or set every `enabled` value to `false` to remove managed shortcuts on the next panel check or `sync`. Unrelated configuration is preserved. Do not edit the managed bindings block: if it was changed, automatic changes are refused. The older `setup --read/--stop/--selection` command remains for compatibility, but its bindings are removed by `sync` unless enabled in the settings file. No packaged Omarchy files or `shell.json` are changed.
+
+After upgrading from fixed shortcuts, update the user plugin as described above, or run `local-voice-integration sync` once. With no settings file, this removes the old owned V/E/X bindings. Package installation cannot update a copied user plugin or remove existing user bindings by itself. Check the result in the target session:
 
 ```sh
-local-voice-integration setup --read 'SUPER ALT + V' --stop 'SUPER ALT + X' --selection 'SUPER ALT + E'
-local-voice-integration setup --read 'SUPER ALT + V' --stop 'SUPER ALT + X' --selection 'SUPER ALT + E' --apply
-hyprctl reload
+local-voice-integration sync
 hyprctl configerrors
 hyprctl binds -j | grep local-voice
 ```
-
-Change any key that conflicts with an existing binding. On Lua-provider hosts the script appends a managed block to `~/.config/hypr/bindings.lua` and records ownership in `~/.config/local-voice/omarchy-integration.json`. The selection shortcut toggles speech of the Wayland primary selection. The script does not change packaged Omarchy files or `shell.json`. To undo only its managed block:
-
-```sh
-local-voice-integration remove
-local-voice-integration remove --apply
-hyprctl reload
-hyprctl configerrors
-```
-
-If you edited the managed block, removal refuses to delete it automatically.
 
 ## Chrome extension
 
@@ -96,12 +107,11 @@ systemctl --user restart local-voice.service
 
 The controller checks the protocol version and replaces a controller from a previous package automatically. If replacement fails, see the fallback below. Use the widget upgrade steps above for new QML.
 
-Before uninstalling, preview and remove managed shortcuts while their command still exists, then stop and disable the user service, disable the plugin, and remove the package:
+Before uninstalling, disable all entries in `~/.config/local-voice/shortcuts.toml` (or delete the file), then remove managed shortcuts while their command still exists. Stop and disable the user service, disable the plugin, and remove the package:
 
 ```sh
-local-voice-integration remove
-local-voice-integration remove --apply
-hyprctl reload
+rm -f ~/.config/local-voice/shortcuts.toml
+local-voice-integration sync
 systemctl --user disable --now local-voice.service
 omarchy plugin disable local-voice.panel
 sudo pacman -R local-voice

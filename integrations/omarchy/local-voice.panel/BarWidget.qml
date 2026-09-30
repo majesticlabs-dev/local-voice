@@ -29,6 +29,7 @@ BarWidget {
   function refresh() {
     if (!statusProcess.running) statusProcess.running = true
     if (!healthProcess.running) healthProcess.running = true
+    if (!shortcutProcess.running) shortcutProcess.running = true
   }
 
   function read() { if (!readProcess.running) readProcess.running = true }
@@ -41,8 +42,28 @@ BarWidget {
     else if (action === "read") read()
     else if (action === "selection") select()
     else if (action === "app") launch()
+    else if (action === "settings" && !settingsProcess.running) settingsProcess.running = true
     else if (action === "quit" && !quitProcess.running) quitProcess.running = true
     else if (action === "start" && !startProcess.running) startProcess.running = true
+  }
+
+  Process {
+    id: shortcutProcess
+    command: Status.commands().shortcuts
+    stderr: StdioCollector {
+      onStreamFinished: { if (text.trim()) console.warn(text.trim()) }
+    }
+    onExited: function(code) {
+      if (code !== 0) console.warn("Local Voice shortcut sync failed: " + code)
+    }
+  }
+
+  Process {
+    id: settingsProcess
+    command: Status.commands().settings
+    onExited: function(code) {
+      if (code !== 0) console.warn("Local Voice could not open shortcut settings")
+    }
   }
 
   Process {
@@ -163,6 +184,13 @@ BarWidget {
           leftAlign: true
           focusable: true
           onClicked: root.choose("app")
+        }
+        Button {
+          width: parent.width
+          text: "Shortcut settings"
+          leftAlign: true
+          focusable: true
+          onClicked: root.choose("settings")
         }
         Button {
           width: parent.width
