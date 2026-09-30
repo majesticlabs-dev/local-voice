@@ -191,6 +191,50 @@ binding = "SUPER ALT + E; bad"
         self.assertIn("conflicts", result.stderr)
         self.assertFalse(self.record.exists())
 
+    def test_editor_and_xdg_open_survive_panel_launcher_pipe_closure(self):
+        import time
+        result_path = self.bin / "launch-result"
+        release = self.bin / "launch-release"
+        launcher = f'''#!{sys.executable}
+import os, sys, time
+from pathlib import Path
+deadline = time.monotonic() + 5
+while not Path(os.environ["LAUNCH_RELEASE"]).exists():
+    if time.monotonic() > deadline:
+        sys.exit(1)
+    time.sleep(0.01)
+# A real terminal can emit startup warnings after the settings helper exits.
+sys.stdout.write("terminal startup\\n")
+sys.stdout.flush()
+sys.stderr.write("terminal warning\\n")
+sys.stderr.flush()
+Path(os.environ["EDITOR_RESULT"]).write_text("\\n".join(sys.argv[1:]))
+'''
+        for name in ("xdg-terminal-exec", "xdg-open"):
+            binary = self.bin / name
+            binary.write_text(launcher)
+            binary.chmod(0o755)
+        self.env.update(EDITOR_RESULT=str(result_path), LAUNCH_RELEASE=str(release))
+        for editor, expected_prefix in (("test-editor --wait", ["test-editor", "--wait"]), ("", [])):
+            with self.subTest(editor=editor):
+                result_path.unlink(missing_ok=True)
+                release.unlink(missing_ok=True)
+                self.env["EDITOR"] = editor
+                process = subprocess.Popen([sys.executable, str(SCRIPT), "settings"],
+                                           env=self.env, stdin=subprocess.PIPE,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    self.assertEqual(process.wait(timeout=5), 0)
+                finally:
+                    for stream in (process.stdin, process.stdout, process.stderr):
+                        stream.close()
+                    release.touch()
+                deadline = time.monotonic() + 6
+                while not result_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(result_path.exists(), "Editor died when the panel closed launcher pipes")
+                self.assertEqual(result_path.read_text().splitlines(), expected_prefix + [str(self.home / ".config/local-voice/shortcuts.toml")])
+
     def test_editor_menu_command_creates_disabled_file_and_preserves_user_settings(self):
         editor = self.bin / "xdg-terminal-exec"
         editor.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$EDITOR_RESULT"\n')

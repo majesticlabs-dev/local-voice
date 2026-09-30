@@ -104,7 +104,10 @@ def open_settings():
     editor = shlex.split(os.environ.get("EDITOR", ""))
     # Launch terminal editors in the user's terminal, not the panel's hidden stdout.
     command = ["xdg-terminal-exec", *editor, str(path)] if editor else ["xdg-open", str(path)]
-    subprocess.Popen(command, start_new_session=True)
+    # Quickshell closes the helper's pipes on exit. The detached editor must not
+    # inherit them or startup diagnostics can terminate it with a broken pipe.
+    subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def sync_settings():
