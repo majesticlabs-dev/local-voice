@@ -64,8 +64,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("toggle-selection", text)
         self.assertNotIn("read-clipboard", text)
         self.assertNotIn('"local-voice-controller stop"', text)
-        self.fixture.write_text(json.dumps([{"modmask": 12, "key": "R", "dispatcher": "exec",
-                                            "arg": "local-voice-controller toggle-selection", "submap": ""}]))
+        self.fixture.write_text(json.dumps([{"modmask": 12, "key": "R", "dispatcher": "__lua",
+                                            "arg": "140", "description": "Local Voice toggle selection", "submap": ""}]))
         self.assertEqual(self.command("sync").returncode, 0)
         self.assertEqual(self.lua_bindings.read_text(), text)
         path.write_text('[selection]\nenabled = true\nbinding = "SUPER ALT + E"\n')
@@ -167,6 +167,18 @@ binding = "SUPER ALT + E; bad"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Owned bindings changed", result.stderr)
         self.assertEqual(self.bindings.read_text(), edited)
+
+    def test_ambiguous_lua_callback_collision_is_not_ignored(self):
+        self.use_lua()
+        self.write_settings('[read]\nenabled = true\nbinding = "SUPER ALT + V"\n')
+        self.assertEqual(self.command("sync").returncode, 0)
+        binding = {"modmask": 72, "key": "V", "submap": "", "dispatcher": "__lua",
+                   "arg": "140", "description": "Local Voice read clipboard"}
+        self.fixture.write_text(json.dumps([binding, {**binding, "arg": "141"}]))
+        result = self.command("sync")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("conflicts", result.stderr)
+        self.assertFalse(self.record.exists())
 
     def test_conflicting_same_command_not_in_owned_key_is_skipped(self):
         path = self.write_settings('[read]\nenabled = true\nbinding = "SUPER ALT + V"\n')

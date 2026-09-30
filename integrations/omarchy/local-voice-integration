@@ -174,8 +174,10 @@ def _sync_settings():
             collisions = [b for b in binds if b.get("modmask") == mask
                           and str(b.get("key", "")).casefold() == key.casefold()
                           and b.get("submap", "") == ""]
-            # Exclude only exact commands owned by our recorded block.
-            collisions = [b for b in collisions if not owned_effective_binding(b, record)]
+            # Lua callbacks hide the command. Match their recorded key and description.
+            # Multiple matches are ambiguous, so never discard more than one collision.
+            if len(collisions) == 1 and owned_effective_binding(collisions[0], record):
+                collisions = []
             if collisions:
                 warning(f"Existing binding conflicts with {description}; skipping")
             else:
@@ -214,14 +216,14 @@ def _sync_settings():
 
 
 def owned_effective_binding(bind, record):
-    if not record or bind.get("dispatcher") != "exec":
+    if not record or bind.get("dispatcher") not in ("exec", "__lua"):
         return False
     for line in record["block"].splitlines():
         if record.get("provider", "conf") == "lua":
             match = re.fullmatch(r'o.bind\((".*?"), (".*?"), (".*?")\)', line)
             if not match:
                 continue
-            value, _, command = (json.loads(part) for part in match.groups())
+            value, description, command = (json.loads(part) for part in match.groups())
             parts = value.split(" + ")
             binding = shortcut(" ".join(parts[:-1]) + " + " + parts[-1])
         else:
@@ -232,7 +234,9 @@ def owned_effective_binding(bind, record):
             binding = shortcut(mods + " + " + key)
         if (bind.get("modmask") == binding[0]
                 and str(bind.get("key", "")).casefold() == binding[1].casefold()
-                and bind.get("arg") == command):
+                and (bind.get("dispatcher") == "exec" and bind.get("arg") == command
+                     or record.get("provider") == "lua" and bind.get("dispatcher") == "__lua"
+                     and bind.get("description") == description)):
             return True
     return False
 
